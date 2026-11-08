@@ -20,8 +20,13 @@ passed but is not used by `predict_action_batch`.
 
 Run each block on `server4`. The research repo's local changes must first be
 committed and made available to the server checkout. Stop if any command fails.
+The validated server shell had the `tdmpc2-ms2` conda environment active;
+activate it before these commands, then invoke the RLinf venv Python by its
+absolute path. This preserves the server's working library environment while
+selecting the intended RLinf Python packages.
 
 ```bash
+conda activate tdmpc2-ms2
 export RESEARCH_ROOT=/nfs4/jhkim/repos/rlinf
 cd "$RESEARCH_ROOT"
 mkdir -p "$RESEARCH_ROOT/logs"
