@@ -20,16 +20,18 @@ passed but is not used by `predict_action_batch`.
 
 Run each block on `server4`. The research repo's local changes must first be
 committed and made available to the server checkout. Stop if any command fails.
-Activate the server's actual RLinf conda environment before these commands.
-Do not infer that environment from the interactive prompt: `tdmpc2-ms2`
-appeared during an earlier run but belongs to a different project. The
-correct conda environment name must be confirmed on the server. The RLinf
-Python packages are selected explicitly with the venv interpreter path below.
+The server's `conda info --envs` listing contains no RLinf-specific conda
+environment. Activate conda `base` as the host shell, then activate the
+RLinf project venv. Do not use either `tdmpc2-ms2` or the nonexistent
+`rlinf-libero-cu121-v2` as the conda environment for this protocol. The
+interpreter path below selects the actual RLinf Python packages. Check CUDA
+with that interpreter before the next smoke run.
 
 ```bash
-# Activate the confirmed RLinf conda environment here.
+conda activate base
 export RESEARCH_ROOT=/nfs4/jhkim/repos/rlinf
 cd "$RESEARCH_ROOT"
+source "$RESEARCH_ROOT/upstream/RLinf/.venv-rlvr-libero-cu121/bin/activate"
 mkdir -p "$RESEARCH_ROOT/logs"
 git status --short
 git rev-parse HEAD
