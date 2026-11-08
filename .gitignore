@@ -1,0 +1,37 @@
+# Upstream is independently cloned and pinned in manifests
+/upstream/
+
+# Environments and caches
+.venv*/
+venv/
+conda-envs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+.huggingface/
+
+# Models, datasets, and generated artifacts
+/checkpoints/
+/datasets/
+/outputs/
+/logs/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+wandb/
+runs/
+ray_results/
+ray_tmp/
+*.mp4
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+/configs/local/
+/manifests/local/
+.DS_Store
