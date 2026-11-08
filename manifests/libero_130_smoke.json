@@ -1,0 +1,42 @@
+{
+  "upstream_rlinf_commit": "e05f71e80d14ab4b55e5027ee739cfbcc6b12b9d",
+  "suite": "libero_130",
+  "protocol": {
+    "total_num_envs": 1,
+    "rollout_epoch": 1,
+    "seed": 0,
+    "fixed_reset_state_ids": true,
+    "ordered_reset_state_ids": true,
+    "max_episode_steps": 520,
+    "action_dim": 7,
+    "action_chunks": 8,
+    "unnorm_key": "libero_130_no_noops_trajall",
+    "task_id": null,
+    "trial_id": null,
+    "note": "Task and trial IDs were not captured in the terminal output. These are runtime smoke tests, not benchmark estimates."
+  },
+  "runs": [
+    {
+      "name": "sft_deterministic",
+      "checkpoint": "RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora",
+      "revision": "a4ea91b3897648f3c1395e5221edb40b8f53d1a4",
+      "lora_applied": true,
+      "do_sample": false,
+      "success_once": 0,
+      "episode_len": 520,
+      "num_trajectories": 1,
+      "log_dir": "upstream/RLinf/logs/20261108-19:52:18-libero_10_openvlaoft_eval"
+    },
+    {
+      "name": "grpo_stochastic",
+      "checkpoint": "RLinf/RLinf-OpenVLAOFT-LIBERO-130",
+      "revision": "473954241c8148bc9a1bf9ed547a74523e4a7d41",
+      "lora_applied": false,
+      "do_sample": true,
+      "success_once": 1,
+      "episode_len": 88,
+      "num_trajectories": 1,
+      "log_dir": "upstream/RLinf/logs/20261108-20:02:20-libero_10_openvlaoft_eval"
+    }
+  ]
+}
