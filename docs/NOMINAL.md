@@ -1,0 +1,183 @@
+# LIBERO-130 nominal rollout collection
+
+This is an evaluation-only data collection protocol for the pinned RLinf
+checkout `e05f71e80d14ab4b55e5027ee739cfbcc6b12b9d`. It uses the
+LIBERO-130 SFT base plus its LoRA adapter and the separate GRPO final policy.
+The same policy is evaluated on the Goal (`libero_goal`), Spatial
+(`libero_spatial`), and Long (`libero_10`) subsets. The mapping audit checks
+the exact task identity and five initial-state byte hashes against
+`libero_130`; it does not infer index offsets.
+
+The existing one-episode SFT smoke in `manifests/libero_130_smoke.json` was
+**stochastic**, despite the CLI setting `do_sample=false`: the pinned RLinf
+eval worker derives sampling from `temperature_eval > 0`. Its success/failure
+must not be pooled with the deterministic conditions below. This collector
+passes `do_sample` and temperature directly to the native model. In the
+pinned model, `top_k` and temperature affect stochastic sampling; `top_p` is
+passed but is not used by `predict_action_batch`.
+
+## Server preflight and mapping audit
+
+Run each block on `server4`. The research repo's local changes must first be
+committed and made available to the server checkout. Stop if any command fails.
+
+```bash
+export RESEARCH_ROOT=/nfs4/jhkim/repos/rlinf
+cd "$RESEARCH_ROOT"
+mkdir -p "$RESEARCH_ROOT/logs"
+git status --short
+git rev-parse HEAD
+git -C upstream/RLinf rev-parse HEAD
+git -C upstream/RLinf status --short
+export EMBODIED_PATH="$RESEARCH_ROOT/upstream/RLinf/examples/embodiment"
+export PYTHONPATH="$RESEARCH_ROOT:$RESEARCH_ROOT/upstream/RLinf:${PYTHONPATH:-}"
+export LIBERO_TYPE=standard
+VENV_PY="$RESEARCH_ROOT/upstream/RLinf/.venv-rlvr-libero-cu121/bin/python"
+"$VENV_PY" -c 'import torch; print(torch.__version__, torch.cuda.is_available())'
+nvidia-smi
+df -h "$RESEARCH_ROOT"
+```
+
+The process requires an idle GPU and at least 10 GiB free in the collector's
+preflight. The 450-episode output may require substantially more than this;
+check disk usage during execution. Do not stop other users' Ray processes.
+
+```bash
+"$VENV_PY" "$RESEARCH_ROOT/scripts/diagnostics/audit_libero_mapping.py" \
+  --output "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" --trials 5
+"$VENV_PY" -m json.tool "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" >/dev/null
+```
+
+If mapping fails, stop. Do not guess task IDs. `manifests/local/` is ignored
+by Git because this is a machine-specific audit result.
+
+## Bounded smoke
+
+Each invocation runs one initial state of the first task in each of the three
+subsets: three episodes per condition. Each run has a unique ID. An existing
+run is never overwritten.
+
+```bash
+cd "$RESEARCH_ROOT"
+for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
+  "$VENV_PY" scripts/evaluate/nominal_collect.py \
+    --research-root "$RESEARCH_ROOT" \
+    --mapping "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" \
+    --run-id "smoke-${condition}-v1" --condition "$condition" --smoke \
+    2>&1 | tee "$RESEARCH_ROOT/logs/nominal-smoke-${condition}.log"
+  test "${PIPESTATUS[0]}" -eq 0 || break
+done
+```
+
+The loop is Bash, not zsh. Inspect all three `summary.json` files before
+expanding. Confirm completed 3/3, no missing episodes, task IDs and init-state
+hashes, 8-token chunks, real EEF pose, aligned state/action lengths, and image
+reload. A failed task outcome is valid data; a collector exception is not.
+Run the structural validator on every smoke run:
+
+```bash
+for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
+  "$VENV_PY" "$RESEARCH_ROOT/scripts/evaluate/nominal_validate.py" \
+    "$RESEARCH_ROOT/outputs/nominal/smoke-${condition}-v1" || break
+done
+```
+
+The user runs the server commands and reviews smoke evidence before full
+collection. The code has only passed local CPU storage/mapping tests so far;
+no claim of GPU validation is made.
+
+## Full collection after smoke validation
+
+Each command targets exactly 10 tasks × 5 audited initial states per suite,
+or 150 episodes per condition. The required three conditions total 450
+episodes. The optional fourth `sft_stochastic` would add 150. Run serially on
+the single A5000.
+
+```bash
+cd "$RESEARCH_ROOT"
+for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
+  "$VENV_PY" scripts/evaluate/nominal_collect.py \
+    --research-root "$RESEARCH_ROOT" \
+    --mapping "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" \
+    --run-id "nominal-${condition}-v1" --condition "$condition" \
+    2>&1 | tee "$RESEARCH_ROOT/logs/nominal-${condition}.log"
+  test "${PIPESTATUS[0]}" -eq 0 || break
+done
+```
+
+The collector never invokes the RLinf training runner or any optimizer. It
+loads each policy once and runs one simulator process at a time. `--smoke`
+changes the expected episode set and therefore cannot be used to resume a
+full run.
+
+## Status, resume, and validation
+
+```bash
+ps -u "$USER" -o pid,etime,stat,cmd | grep -E '[n]ominal_collect.py|[O]ffScreenRenderEnv'
+tail -80 "$RESEARCH_ROOT/logs/nominal-grpo_stochastic.log"
+du -sh "$RESEARCH_ROOT/outputs/nominal"/*
+```
+
+Resume only the same run ID, condition, mapping, code version, and smoke/full
+mode. A partial directory stays hidden from the summary. An existing complete
+episode is skipped; an incomplete visible episode is an error that needs
+inspection.
+
+```bash
+"$VENV_PY" "$RESEARCH_ROOT/scripts/evaluate/nominal_collect.py" \
+  --research-root "$RESEARCH_ROOT" \
+  --mapping "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" \
+  --run-id nominal-grpo_stochastic-v1 --condition grpo_stochastic --resume
+```
+
+For each full run, inspect `outputs/nominal/<run-id>/summary.json`,
+`episodes.csv`, and `manifest.json`. The summary is rebuilt after every
+episode from validated directories, so it records the count, success rate,
+mean length, missing IDs, per-suite counts, and total stored bytes. The
+success rates are empirical for the selected 5 states per task, not the
+published 130-task benchmark. Never combine deterministic with stochastic
+successes.
+
+```bash
+for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
+  "$VENV_PY" "$RESEARCH_ROOT/scripts/evaluate/nominal_validate.py" \
+    "$RESEARCH_ROOT/outputs/nominal/nominal-${condition}-v1" || break
+done
+```
+
+## Data interpretation
+
+`states.npz` contains one simulator observation at reset plus one after each
+executed action: `T+1` states for `T` actions. `robot0_eef_pos` is the
+simulator's world-frame XYZ; `robot0_eef_quat` is its raw quaternion. Other
+numeric simulator observation keys, including joints and available object
+states, are kept by name. The position unit is the simulator's world unit
+(meters in LIBERO/robosuite); do not assume it matches an external expert
+dataset frame. Settling actions during the standard 15-step reset are not
+counted as policy actions.
+
+`actions.npz` contains every eight-slot decoded chunk and raw token chunk,
+plus the actions actually sent to the simulator. The latter have RLinf's
+LIBERO gripper postprocessing. `executed_query_index`,
+`executed_action_slot`, and `simulator_step` align each executed action to a
+query and the `T+1` states. If success or horizon occurs mid-chunk, remaining
+slots are *not* recorded as executed. This differs from the upstream
+`chunk_step` implementation, which still calls the simulator on later slots
+after an already-done signal and masks them for metrics. This collector stops
+at the first terminal action, preserving the same valid prefix and official
+`success_once` judgment. Before interpreting rates as identical to the
+official evaluator, compare paired bounded runs and investigate differences.
+
+`observations.npz` contains query-step indices, raw main-camera image,
+180-degree rotated policy main image, proprio input, processor pixel tensor,
+input IDs, and attention mask. The wrist image is stored only if the loaded
+model actually uses more than one image; the pinned LIBERO-130 model uses one.
+The language string is in `metadata.json`. NPZ uses lossless compression; the
+processor pixel values are saved as float32 if the in-memory type is bfloat16.
+Full logits and hidden states are intentionally outside this phase.
+
+The collector aborts on source/checkpoint mismatch, missing normalization
+statistics, mapping mismatch, invalid EEF/action values, or state/action
+alignment failure. Files are written into a `.partial-*` directory and
+promoted to a complete episode directory only after they reload successfully.
+Remote GPU smoke remains the gate before the 450-episode run.
