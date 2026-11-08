@@ -90,9 +90,31 @@ for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
 done
 ```
 
-The user runs the server commands and reviews smoke evidence before full
-collection. The code has only passed local CPU storage/mapping tests so far;
-no claim of GPU validation is made.
+On 2026-11-08 the user ran and structurally validated all three bounded GPU
+smokes in the RLinf venv. Each completed 3/3 episodes with no missing IDs:
+
+| Condition | Goal | Spatial | Long | Total |
+| --- | ---: | ---: | ---: | ---: |
+| SFT deterministic | 0/1 | 0/1 | 0/1 | 0/3 |
+| GRPO deterministic | 1/1 | 1/1 | 0/1 | 2/3 |
+| GRPO stochastic, temperature 1.6 | 1/1 | 1/1 | 1/1 | 3/3 |
+
+The GRPO deterministic smoke was replayed under conda `base` plus the RLinf
+venv. For all three episodes, metadata (except run ID) and every array in
+`actions.npz`, `states.npz`, and `observations.npz` matched exactly. This
+checks fixed-state reproducibility, not performance or independently
+instrumented action equivalence to the official worker.
+
+An uninstrumented official RLinf `libero_goal` evaluation of the GRPO model
+with the same task/trial (0/0), seed, normalization, and deterministic
+sampling reported success and `episode_len=104`. The collector recorded the
+first terminal action at step 101. The pinned upstream `LiberoEnv.chunk_step`
+executes all eight slots even after termination; its `episode_len` metric is
+read from the final slot's elapsed step. Thus the official reported length
+is `ceil(101 / 8) * 8 = 104`. The official worker does not persist per-step
+actions, so exact action equality between the two implementations has not
+been measured. Full runs must preserve this distinction between valid-prefix
+length and upstream chunk-end length.
 
 ## Full collection after smoke validation
 
