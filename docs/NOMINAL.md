@@ -2,7 +2,8 @@
 
 This is an evaluation-only data collection protocol for the pinned RLinf
 checkout `e05f71e80d14ab4b55e5027ee739cfbcc6b12b9d`. It uses the
-LIBERO-130 SFT base plus its LoRA adapter and the separate GRPO final policy.
+LIBERO-130 SFT checkpoint, with the adapter-loading choice recorded explicitly,
+and the separate GRPO final policy.
 The same policy is evaluated on the Goal (`libero_goal`), Spatial
 (`libero_spatial`), and Long (`libero_10`) subsets. The mapping audit checks
 the exact task identity and five initial-state byte hashes against
@@ -31,6 +32,7 @@ with that interpreter before the next smoke run.
 conda activate base
 export RESEARCH_ROOT=/nfs4/jhkim/repos/rlinf
 cd "$RESEARCH_ROOT"
+git pull --ff-only origin main
 source "$RESEARCH_ROOT/upstream/RLinf/.venv-rlvr-libero-cu121/bin/activate"
 mkdir -p "$RESEARCH_ROOT/logs"
 git status --short
@@ -99,6 +101,25 @@ smokes in the RLinf venv. Each completed 3/3 episodes with no missing IDs:
 | GRPO deterministic | 1/1 | 1/1 | 0/1 | 2/3 |
 | GRPO stochastic, temperature 1.6 | 1/1 | 1/1 | 1/1 | 3/3 |
 
+On 2026-11-09 the full `sft_deterministic` collection completed 150/150
+episodes, all failures at 520 steps (Goal, Spatial, Long: 0/50 each). This is
+**the SFT checkpoint with the additional LoRA adapter applied**, not a
+validated reproduction of the published SFT baseline. The published unified
+SFT model reports 49.40% Goal, 51.61% Spatial, and 11.90% Long across 500
+trials per suite ([RLinf benchmark](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html)).
+The difference requires investigation before using this collection as a
+baseline.
+
+The adapter is active: inference on the stored first observation reproduces
+the recorded 56 action tokens exactly; disabling it changes 9 tokens. In
+official RLinf evaluation, Goal task 0/trial 0 fails at 520 steps both with
+and without the adapter. Goal task 0/trial 25 fails at 520 with the adapter
+but succeeds at 128 with the base weights alone. This paired result makes
+adapter loading a stronger lead than a collector-only success-count bug, but
+does not establish the correct loading mode for every task. The pinned
+upstream `libero_130_grpo_openvlaoft.yaml` points at the `Base-Lora`
+checkpoint while inheriting `is_lora=false` from `model/openvla_oft.yaml`.
+
 The GRPO deterministic smoke was replayed under conda `base` plus the RLinf
 venv. For all three episodes, metadata (except run ID) and every array in
 `actions.npz`, `states.npz`, and `observations.npz` matched exactly. This
@@ -117,6 +138,34 @@ been measured. Full runs must preserve this distinction between valid-prefix
 length and upstream chunk-end length.
 
 ## Full collection after smoke validation
+
+The historical command below produced the adapter-on SFT 0/150 run. Do not
+interpret it as a validated SFT baseline. The collector now also accepts
+`sft_base_only_deterministic`; use a new run ID for that loading control and
+validate its summary before proceeding to full GRPO comparisons.
+
+Run the base-only control under a new ID; `sft_deterministic` retains its
+historical adapter-on meaning for provenance. The initial three-episode
+smoke may still all fail, so inspect a broader subset before deciding whether
+the published result has been reproduced.
+
+```bash
+conda activate base
+export RESEARCH_ROOT=/nfs4/jhkim/repos/rlinf
+cd "$RESEARCH_ROOT"
+git pull --ff-only origin main
+source "$RESEARCH_ROOT/upstream/RLinf/.venv-rlvr-libero-cu121/bin/activate"
+export EMBODIED_PATH="$RESEARCH_ROOT/upstream/RLinf/examples/embodiment"
+export PYTHONPATH="$RESEARCH_ROOT:$RESEARCH_ROOT/upstream/RLinf:${PYTHONPATH:-}"
+export LIBERO_TYPE=standard
+python scripts/evaluate/nominal_collect.py \
+  --research-root "$RESEARCH_ROOT" \
+  --mapping "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" \
+  --run-id nominal-sft_base_only_deterministic-v1 \
+  --condition sft_base_only_deterministic
+python scripts/evaluate/nominal_validate.py \
+  "$RESEARCH_ROOT/outputs/nominal/nominal-sft_base_only_deterministic-v1"
+```
 
 Each command targets exactly 10 tasks × 5 audited initial states per suite,
 or 150 episodes per condition. The required three conditions total 450

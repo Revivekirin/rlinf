@@ -27,7 +27,7 @@
 1. `run_eval.sh libero libero_10_openvlaoft_eval`을 실행한다.
 2. Hydra가 eval YAML과 model/env preset을 합친 후 CLI override를 적용한다. `--cfg job`으로 최종 설정만 확인할 수 있다.
 3. RLinf가 로컬 Ray instance를 시작하고 환경 worker와 rollout worker를 배치한다. 현재 스모크에는 GPU 1개를 사용했다.
-4. 환경 worker가 LIBERO를 초기화한다. 모델 worker는 OpenVLA-OFT checkpoint를 읽고, SFT일 때만 LoRA adapter를 추가한다.
+4. 환경 worker가 LIBERO를 초기화한다. 모델 worker는 OpenVLA-OFT checkpoint를 읽고, 설정된 경우 LoRA adapter를 추가한다. LIBERO-130 SFT에서 추가 적용이 맞는지는 [로딩 대조](MODELS.md)를 참고한다.
 5. 모델이 관측과 지시를 받아 action chunk를 생성한다. LIBERO가 이를 실행하고 reward·success·episode length를 집계한다.
 6. `eval/success_once` 등의 집계값과 최종 설정이 로그에 남는다.
 

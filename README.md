@@ -20,6 +20,7 @@
 - LIBERO assets `articulated_objects`, `scenes`, `stable_hope_objects` 존재 확인.
 - LIBERO-130 SFT 베이스+LoRA와 GRPO 모델을 revision 고정으로 다운로드하고 원격 파일 목록·크기를 확인했다.
 - RLinf 공식 평가 진입점으로 모델별 **1개 에피소드**를 끝까지 실행했다. SFT: `success_once=0`, 520 step. GRPO: `success_once=1`, 88 step, exit 0. 고정 RLinf 코드에서 `temperature_eval=1.6`은 `do_sample=false` 설정에도 불구하고 실제 stochastic 추론을 선택하므로 **두 스모크 모두 effective stochastic**이었다. 이는 실행 스모크 결과이지 성능 비교가 아니다.
+- 추가 LoRA를 붙인 SFT deterministic nominal 수집은 Goal/Spatial/Long 각 0/50이었다. 공식 Goal task 0/trial 25 대조에서는 adapter 적용 실패(520 step), base 가중치만 사용 시 성공(128 step)이어서 SFT 로딩 방식을 재검증 중이다. [진단 기록](docs/MODELS.md)을 먼저 확인한다.
 - LIBERO-PLUS 설치·OOD 평가, 4조건 통제 비교, 전체 suite 평가, SFT/RL 학습은 아직 수행하지 않았다.
 
 ## 문서 순서

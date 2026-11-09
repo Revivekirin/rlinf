@@ -26,10 +26,11 @@ UPSTREAM_COMMIT = "e05f71e80d14ab4b55e5027ee739cfbcc6b12b9d"
 NORM_KEY = "libero_130_no_noops_trajall"
 SUITES = ("libero_goal", "libero_spatial", "libero_10")
 CONDITIONS = {
-    "sft_deterministic": ("sft", False, 1.0),
-    "grpo_deterministic": ("grpo", False, 1.0),
-    "grpo_stochastic": ("grpo", True, 1.6),
-    "sft_stochastic": ("sft", True, 1.6),
+    "sft_deterministic": ("sft", False, 1.0, True),
+    "sft_base_only_deterministic": ("sft", False, 1.0, False),
+    "grpo_deterministic": ("grpo", False, 1.0, False),
+    "grpo_stochastic": ("grpo", True, 1.6, False),
+    "sft_stochastic": ("sft", True, 1.6, True),
 }
 MODELS = {
     "sft": ("RLinf-OpenVLAOFT-LIBERO-130-Base-Lora", "RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora", "a4ea91b3897648f3c1395e5221edb40b8f53d1a4"),
@@ -227,14 +228,14 @@ def main() -> None:
     mapping = json.loads(args.mapping.read_text())
     trials = 1 if args.smoke else 5
     rows = check_mapping(mapping, SUITES, trials)
-    checkpoint_kind, sampling, temperature = CONDITIONS[args.condition]
+    checkpoint_kind, sampling, temperature, load_lora = CONDITIONS[args.condition]
     checkpoint_dir, checkpoint_repo, checkpoint_revision = MODELS[checkpoint_kind]
     checkpoint = root / "checkpoints" / checkpoint_dir
     check_checkpoint_inventory(root, checkpoint, checkpoint_repo, checkpoint_revision)
     for required in ("config.json", "dataset_statistics.json", "model.safetensors.index.json"):
         if not (checkpoint / required).is_file():
             raise FileNotFoundError(checkpoint / required)
-    if checkpoint_kind == "sft" and not (checkpoint / "lora_adapter" / "adapter_model.safetensors").is_file():
+    if load_lora and not (checkpoint / "lora_adapter" / "adapter_model.safetensors").is_file():
         raise FileNotFoundError(checkpoint / "lora_adapter" / "adapter_model.safetensors")
     norm_stats = json.loads((checkpoint / "dataset_statistics.json").read_text())
     if NORM_KEY not in norm_stats:
@@ -254,14 +255,15 @@ def main() -> None:
     model_cfg.model_path = str(checkpoint)
     model_cfg.unnorm_key = NORM_KEY
     model_cfg.max_prompt_length = 128
-    model_cfg.is_lora = checkpoint_kind == "sft"
-    model_cfg.lora_path = str(checkpoint / "lora_adapter") if checkpoint_kind == "sft" else None
+    model_cfg.is_lora = load_lora
+    model_cfg.lora_path = str(checkpoint / "lora_adapter") if load_lora else None
     protocol = {
         "schema_version": 1, "upstream_commit": UPSTREAM_COMMIT,
         "checkpoint_repo": checkpoint_repo, "checkpoint_revision": checkpoint_revision,
         "checkpoint_path": str(checkpoint), "condition": args.condition,
         "sampling_mode": "stochastic" if sampling else "deterministic",
         "do_sample": sampling, "temperature": temperature,
+        "lora_applied": load_lora,
         "top_k": -1, "top_p": 1.0, "unnorm_key": NORM_KEY,
         "seed": 0, "policy_seed_formula": "100000*subset_suite_index+100*task_id+trial_id",
         "num_steps_wait": 15, "action_chunks": 8, "horizon": 520,
@@ -331,6 +333,7 @@ def main() -> None:
                         "initial_state_sha256": row["trial_sha256"][trial_id],
                         "simulator_seed": 0, "policy_seed": policy_seed,
                         "checkpoint_repo": checkpoint_repo, "checkpoint_revision": checkpoint_revision,
+                        "lora_applied": load_lora,
                         "sampling_mode": protocol["sampling_mode"], "temperature": temperature,
                         "horizon": 520, "wait_steps": 15, "action_chunks": 8,
                         "unnorm_key": NORM_KEY, "upstream_commit": UPSTREAM_COMMIT,
