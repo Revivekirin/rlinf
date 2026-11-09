@@ -28,6 +28,7 @@ SUITES = ("libero_goal", "libero_spatial", "libero_10")
 CONDITIONS = {
     "sft_deterministic": ("sft", False, 1.0, True),
     "sft_base_only_deterministic": ("sft", False, 1.0, False),
+    "sft_base_only_stochastic": ("sft", True, 1.6, False),
     "grpo_deterministic": ("grpo", False, 1.0, False),
     "grpo_stochastic": ("grpo", True, 1.6, False),
     "sft_stochastic": ("sft", True, 1.6, True),

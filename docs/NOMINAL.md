@@ -168,13 +168,15 @@ python scripts/evaluate/nominal_validate.py \
 ```
 
 Each command targets exactly 10 tasks × 5 audited initial states per suite,
-or 150 episodes per condition. The required three conditions total 450
-episodes. The optional fourth `sft_stochastic` would add 150. Run serially on
-the single A5000.
+or 150 episodes per condition. Use `sft_base_only_stochastic` to compare the
+merged SFT checkpoint with GRPO under the same stochastic decoding settings.
+The older `sft_stochastic` condition applies the extra LoRA adapter and is not
+the SFT baseline. `grpo_deterministic` is the greedy GRPO control. Run these
+conditions serially on the single A5000.
 
 ```bash
 cd "$RESEARCH_ROOT"
-for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
+for condition in sft_base_only_stochastic grpo_deterministic; do
   "$VENV_PY" scripts/evaluate/nominal_collect.py \
     --research-root "$RESEARCH_ROOT" \
     --mapping "$RESEARCH_ROOT/manifests/local/libero_130_mapping.json" \
@@ -218,7 +220,7 @@ published 130-task benchmark. Never combine deterministic with stochastic
 successes.
 
 ```bash
-for condition in sft_deterministic grpo_deterministic grpo_stochastic; do
+for condition in sft_base_only_stochastic grpo_deterministic; do
   "$VENV_PY" "$RESEARCH_ROOT/scripts/evaluate/nominal_validate.py" \
     "$RESEARCH_ROOT/outputs/nominal/nominal-${condition}-v1" || break
 done
