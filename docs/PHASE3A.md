@@ -134,7 +134,7 @@ export MPLCONFIGDIR="${TMPDIR:-/tmp}/rlinf-phase3a-mpl-$USER"
 python -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
 
 export EXPERT_ROOT=/nfs4/jhkim/repos/vla-rlvr
-export EXPERT_RESULTS="$EXPERT_ROOT/outputs/stage1_review/dataset_analysis"
+export EXPERT_RESULTS="$EXPERT_ROOT/outputs/dataset_analysis"
 # Read-only existence checks; if absent, obtain the existing source/archive at these paths.
 test -f "$EXPERT_ROOT/experiments/dataset_analysis/analysis.py"
 test -f "$EXPERT_RESULTS/trajectory_data/long.json"
