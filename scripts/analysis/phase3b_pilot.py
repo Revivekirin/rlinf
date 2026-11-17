@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import gc
 import random
 import inspect
 import hashlib
@@ -259,7 +260,7 @@ def repeat_run(args):
         fresh(args.output); save(args.output/'manifest.json',manifest)
     (args.output/'entries').mkdir(exist_ok=True)
     (args.output/'jobs').mkdir(exist_ok=True)
-    model=None; loaded_policy=None; model_cfg=None
+    model=None; model_core=None; loaded_policy=None; model_cfg=None
     from phase3b_distribution import load_model
     for job in jobs:
         jid=job['job_id']; entry_file=args.output/'entries'/(jid+'.json')
@@ -281,10 +282,11 @@ def repeat_run(args):
                 continue
             if loaded_policy!=job['policy']:
                 if model is not None:
-                    del model
+                    model=None; model_core=None
+                    gc.collect()
                     import torch
                     torch.cuda.empty_cache()
-                model,_,model_cfg=load_model(args.research_root,Path(pl['phase3a']),job['policy'])
+                model,model_core,model_cfg=load_model(args.research_root,Path(pl['phase3a']),job['policy'])
                 loaded_policy=job['policy']
             path=collect_repeat_job(args,pl,job,model,model_cfg)
             entry=dict(job_id=jid,episode_path=str(path.resolve()),protocol_hash=job['protocol_hash'],

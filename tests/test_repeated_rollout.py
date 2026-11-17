@@ -4,7 +4,9 @@ import argparse
 import json
 import sys
 import tempfile
+import types
 import unittest
+import weakref
 from pathlib import Path
 from unittest.mock import patch
 
@@ -149,6 +151,29 @@ class RepeatedRolloutTests(unittest.TestCase):
             self.assertTrue((out/'failures'/(pl['jobs'][0]['job_id']+'.json')).is_file())
             path=self.add_episode(out,pl,pl['jobs'][1],corrupt=True)
             with self.assertRaises((ValueError,AssertionError)): pilot.repeat_validate_state(out,pl,partial=True)
+
+    def test_policy_switch_releases_model_and_core(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); args,pl=self.fixture(root,tasks=(8,),trials=(0,),seeds=[3101])
+            out=self.run_root(root,args,pl)
+            run_args=argparse.Namespace(plan=args.output,audit=root/'audit',output=out,
+                                        research_root=ROOT,smoke=False,resume=True)
+            refs=[]
+            class FakeModel: pass
+            def load_model(_root,_phase3a,policy):
+                if refs:
+                    self.assertTrue(all(ref() is None for ref in refs[-1]),
+                                    'Previous policy still retains model or core')
+                model=FakeModel(); core=FakeModel(); model.core=core
+                refs.append((weakref.ref(model),weakref.ref(core)))
+                return model,core,pl['protocols'][policy]['model_config']
+            def collect(_args,_pl,job,_model,_cfg):
+                return self.add_episode(out,pl,job,entry=False)
+            fake_torch=types.SimpleNamespace(cuda=types.SimpleNamespace(empty_cache=lambda: None))
+            with patch.object(pilot,'repeat_preflight'),patch('phase3b_distribution.load_model',new=load_model),\
+                 patch.object(pilot,'collect_repeat_job',new=collect),patch.dict(sys.modules,{'torch':fake_torch}):
+                pilot.repeat_run(run_args)
+            self.assertEqual(pilot.repeat_validate_state(out,pl)['status'],'COMPLETE_VALID')
 
     def test_recovery_and_same_seed_replay_fixture(self):
         with tempfile.TemporaryDirectory() as td:
