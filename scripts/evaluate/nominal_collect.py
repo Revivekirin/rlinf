@@ -215,8 +215,13 @@ def main() -> None:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--condition", choices=CONDITIONS, required=True)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke-goal", action="store_true",
+                        help="Only Goal task 0, initial state 0")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    if args.smoke_goal:
+        args.smoke = True
+    selected_suites = ("libero_goal",) if args.smoke_goal else SUITES
     if os.environ.get("LIBERO_TYPE", "standard") != "standard":
         parser.error("Only original LIBERO is supported")
     root = args.research_root.resolve()
@@ -272,6 +277,8 @@ def main() -> None:
         "collector_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "model_config": OmegaConf.to_container(model_cfg, resolve=True),
     }
+    if args.smoke_goal:
+        protocol["selected_episode_ids"] = ["libero_goal-t00-i00"]
     protocol_hash = sha256_json(protocol)
     run_dir = root / "outputs" / "nominal" / args.run_id
     if run_dir.exists() and not args.resume:
@@ -286,7 +293,7 @@ def main() -> None:
             raise ValueError("Resume protocol differs from existing manifest")
     else:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    expected = {episode_id(s, t, i) for s in SUITES for t in range(1 if args.smoke else 10) for i in range(trials)}
+    expected = {episode_id(s, t, i) for s in selected_suites for t in range(1 if args.smoke else 10) for i in range(trials)}
     summarize_run(run_dir, expected, protocol_hash)
     pending = [item for item in sorted(expected) if not (run_dir / "rollouts" / item).exists()]
     if not pending:
