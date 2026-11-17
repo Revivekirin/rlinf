@@ -97,7 +97,11 @@ def run(args):
         dest=args.output/'new'/job['job_id']; require(not dest.exists(),f'Incomplete job exists: {dest}; preserve it and use a new run ID')
         dest.mkdir(parents=True)
         protocol=dict(pl['config'],collector_sha256=sha(args.research_root/'scripts/evaluate/nominal_collect.py'),pilot_job={k:v for k,v in job.items() if k!='reference'},
-            environment_config=OmegaConf.to_container(cfg,resolve=True),pilot_source_hashes=sources(),model_config=model_cfg,
+            # The pinned env YAML has an inactive video_base_dir interpolation into
+            # runner.logger.log_path. The original collector passes cfg to LiberoEnv
+            # without resolving it; save that exact config without forcing the
+            # unrelated video field to resolve (video saving is disabled above).
+            environment_config=OmegaConf.to_container(cfg,resolve=False),pilot_source_hashes=sources(),model_config=model_cfg,
             collect_episode_source_sha256=hashlib.sha256(inspect.getsource(nc.collect_episode).encode()).hexdigest(),rng_control=pl['rng_control'])
         ph=protocol_hash(protocol); save(dest/'manifest.json',dict(protocol=protocol,protocol_hash=ph))
         env=LiberoEnv(cfg,num_envs=1,seed_offset=0,total_num_processes=1,worker_info=None)
