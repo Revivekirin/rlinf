@@ -4,11 +4,14 @@ import ast
 import collections
 import hashlib
 import importlib
-import json
 import math
 import sys
 from pathlib import Path
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.common.integrity import require, sha, array_hash
+from scripts.common.protocols import protocol_hash
 
 SUITES = ('libero_goal', 'libero_spatial', 'libero_10')
 LABELS = ('sft', 'grpo', 'stochastic')
@@ -20,31 +23,6 @@ REVISION = {'sft': 'a4ea91b3897648f3c1395e5221edb40b8f53d1a4',
             'grpo': '473954241c8148bc9a1bf9ed547a74523e4a7d41',
             'stochastic': '473954241c8148bc9a1bf9ed547a74523e4a7d41'}
 CONDITIONS = dict(zip(LABELS, ('sft_base_only_deterministic', 'grpo_deterministic', 'grpo_stochastic')))
-
-
-def require(ok, message):
-    if not ok:
-        raise ValueError(message)
-
-
-def sha(path):
-    h = hashlib.sha256()
-    with Path(path).open('rb') as f:
-        for block in iter(lambda: f.read(4*1024*1024), b''):
-            h.update(block)
-    return h.hexdigest()
-
-
-def array_hash(a):
-    a = np.ascontiguousarray(a)
-    require(not a.dtype.hasobject, 'Object array forbidden')
-    h = hashlib.sha256()
-    h.update(str(a.dtype).encode()); h.update(repr(a.shape).encode()); h.update(a.tobytes())
-    return h.hexdigest()
-
-
-def protocol_hash(p):
-    return hashlib.sha256(json.dumps(p, sort_keys=True).encode()).hexdigest()
 
 
 def legacy(root):

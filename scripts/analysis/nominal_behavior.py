@@ -21,29 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from phase3a_core import (SUITES, LABELS, COMPARISONS, CATEGORIES, REVISION, CONDITIONS,
     require, sha, array_hash, protocol_hash, legacy, identity, match_records,
     outcome_stats, canonical, choose_cases, select_queries, category)
+from scripts.common.io import read, save, csv_save
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def read(path):
-    return json.loads(Path(path).read_text())
-
-
-def save(path, data):
-    path = Path(path); path.parent.mkdir(parents=True,exist_ok=True)
-    with path.open('x') as f:
-        json.dump(data, f, indent=2, sort_keys=True, allow_nan=False)
-        f.write('\n')
-
-
-def csv_save(path, rows):
-    path = Path(path); path.parent.mkdir(parents=True,exist_ok=True)
-    with path.open('x',newline='') as f:
-        if rows:
-            writer = csv.DictWriter(f,fieldnames=list(rows[0]))
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({k:json.dumps(v) if isinstance(v,(dict,list)) else v for k,v in row.items()})
 
 
 def remember(files, path):

@@ -16,6 +16,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from phase3a_core import require, sha, array_hash, protocol_hash, SUITES, REVISION
 from nominal_behavior import read, save, csv_save
+from scripts.common.integrity import seal, verify_seal
 
 ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = 'e05f71e80d14ab4b55e5027ee739cfbcc6b12b9d'
@@ -38,20 +39,6 @@ def fresh(out):
 
 def sources():
     return {str(Path(__file__).parent/n): sha(Path(__file__).parent/n) for n in SOURCE_FILES if (Path(__file__).parent/n).exists()}
-
-
-def seal(out, details):
-    details = dict(details, output_hashes={str(p.relative_to(out)): sha(p) for p in sorted(out.rglob('*')) if p.is_file()})
-    save(out/'validation.json', details)
-    return details
-
-
-def verify_seal(out):
-    v = read(out/'validation.json')
-    require(v['status']=='PASS', f'Validation did not pass: {out}')
-    for name, digest in v['output_hashes'].items():
-        require(sha(out/name)==digest, f'Changed derived output: {name}')
-    return v
 
 
 def verify_phase3a(p):

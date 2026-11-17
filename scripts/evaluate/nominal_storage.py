@@ -6,20 +6,16 @@ import csv
 import json
 import os
 import tempfile
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.common.protocols import episode_id
+
 ARTIFACTS = ("metadata.json", "states.npz", "actions.npz", "observations.npz")
-
-
-def episode_id(suite: str, task_id: int, trial_id: int) -> str:
-    if suite not in {"libero_goal", "libero_spatial", "libero_10"}:
-        raise ValueError(f"Unsupported suite: {suite}")
-    if task_id < 0 or trial_id < 0:
-        raise ValueError("Task and trial IDs must be nonnegative")
-    return f"{suite}-t{task_id:02d}-i{trial_id:02d}"
 
 
 def read_complete(
