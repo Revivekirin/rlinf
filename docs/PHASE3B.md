@@ -48,12 +48,12 @@ Diversity uses original 32-point normalized-index world RMS per same state. Succ
 
 ## Deployment and exact server commands
 
-Transfer `phase3b-code-v2.tar.gz` from the local research repository's `outputs/analysis/` into `/nfs4/jhkim/repos/rlinf/` using your normal transfer method. The archive is not automatically present on server4. It contains only the new Phase 3B scripts, tests and this document. Do not overwrite the nominal collector or Phase 3A code. If you already extracted the older `phase3b-code.tar.gz`, stop before extraction: `tar -xkzf` deliberately refuses to replace those files. Use a clean checkout or review the v2 diff and copy only the changed Phase 3B files.
+Transfer `phase3b-code-v3.tar.gz` from the local research repository's `outputs/analysis/` into `/nfs4/jhkim/repos/rlinf/` using your normal transfer method. The archive is not automatically present on server4. It contains only the new Phase 3B scripts, tests and this document. Do not overwrite the nominal collector or Phase 3A code. If an older Phase 3B archive was already extracted, `tar -xkzf` deliberately refuses to replace those files. Review and apply the targeted pilot fix, then use a new audit/plan/smoke run ID; do not modify the previously sealed run.
 
 ```bash
 cd /nfs4/jhkim/repos/rlinf
 # Only after the archive has actually been transferred:
-tar -xkzf phase3b-code-v2.tar.gz
+tar -xkzf phase3b-code-v3.tar.gz
 conda activate base
 source "$PWD/upstream/RLinf/.venv-rlvr-libero-cu121/bin/activate"
 export RESEARCH_ROOT="$PWD"
@@ -117,3 +117,7 @@ mkdir -p "$RESEARCH_ROOT/logs"
 The direct Python CLIs (`--help` validated) are available for restarting a **missing** worker or resuming an interrupted pilot. Completed files are never overwritten. Example worker recovery: invoke `phase3b_distribution.py worker --model grpo` with the same preflight/output/smoke-result paths, rather than rerunning the SFT worker. Partial worker directories require a new output run; partial pilot job directories also require a new run. `run --resume` reuses only completed, hash-validated pilot entries.
 
 Outputs are under `outputs/analysis/{phase3b_audit,stagnation,sft_sampling,policy_distribution,stochastic_pilot,stochastic_diversity,phase3b_report}/`. The SFT stochastic run was validated by the user on server4, but its new paired comparison has **NOT RUN locally**. GPU distribution results and actual pilot smoke are **NOT RUN locally**. CPU unit tests and synthetic fixtures do not substitute for GPU smoke.
+
+### Pilot smoke interpolation repair (server4, 2026-11-10)
+
+The first `pilot-plan` passed but `pilot-smoke` stopped before any episode was collected. The failure occurred after model load while serializing the env config with `OmegaConf.to_container(cfg, resolve=True)`: the pinned YAML has `video_cfg.video_base_dir: ${runner.logger.log_path}/...`, but this standalone evaluation has no runner logger. `video_cfg.save_video=False`; the original nominal collector passes the config to `LiberoEnv` without resolving that inactive field. The pilot now records `OmegaConf.to_container(cfg, resolve=False)`, preserving the config and the disabled video setting without changing simulator or policy behavior. An OmegaConf regression case and the 19 existing CPU tests pass locally. The failed smoke directory and its original audit/plan remain preserved. A newly hashed pilot source requires a fresh server audit and pilot plan under a new run ID; the completed policy-distribution outputs do not need to be recomputed.

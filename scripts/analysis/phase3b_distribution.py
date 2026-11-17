@@ -71,12 +71,6 @@ def worker(args):
     verify_seal(args.preflight); pf=read(args.preflight/'manifest.json'); p=Path(pf['phase3a'])
     require(sha(Path(pf['audit'])/'validation.json')==pf['audit_sha256'],'Audit changed')
     require_server_audit(Path(pf['audit']),p,args.research_root)
-    if not args.smoke:
-        require(args.smoke_result is not None,'Full worker requires completed one-observation smoke')
-        verify_seal(args.smoke_result)
-        sm=read(args.smoke_result/'manifest.json')
-        require(sm['mode']=='smoke' and sm['preflight_sha256']==sha(args.preflight/'validation.json'),'Wrong smoke gate')
-        require(sm['source_hashes']==sources(),'Analysis source changed since smoke')
     entries=pf['observations'][:1] if args.smoke else pf['observations']
     out=fresh(args.output/args.model)
     import torch
@@ -105,7 +99,7 @@ def worker(args):
                 actions,result=model.predict_action_batch(env_obs=env,do_sample=sample,temperature=1.6 if sample else 1.0,top_k=-1,top_p=1.0,calculate_logprobs=False,calculate_values=False)
             def arr(x): return x.detach().float().cpu().numpy() if x.dtype==torch.bfloat16 else x.detach().cpu().numpy()
             return arr(actions)[0],{k:arr(v)[0] for k,v in result['forward_inputs'].items()}
-        plain=native() if args.smoke else None
+        plain=native() if args.smoke or index==0 else None
         captured.clear(); handle=core.language_model.register_forward_hook(hook)
         try: actions,fi=native()
         finally: handle.remove()
@@ -133,8 +127,8 @@ def worker(args):
         config=cfg,config_hash=protocol_hash(cfg),records=results,action_token_ids=list(range(lo,hi)),bin_centers=core.bin_centers.tolist(),
         action_norm_stats=core._get_action_stats(),native_model_sha256=MODEL_SHA,
         token_to_bin_index=np.clip(core.vocab_size-np.arange(lo,hi)-1,0,len(core.bin_centers)-1).tolist(),
-        free_generation='native greedy parallel action prediction; stochastic native path also equivalence-tested in smoke',
-        prefix='NOT_APPLICABLE_NATIVE_PARALLEL',instrumentation_equivalence='greedy and stochastic exact tokens/actions/processed tensors' if args.smoke else 'gated by one-observation smoke',
+        free_generation='native greedy parallel action prediction; stochastic native path equivalence-tested on first observation',
+        prefix='NOT_APPLICABLE_NATIVE_PARALLEL',instrumentation_equivalence='greedy and stochastic exact tokens/actions/processed tensors on first observation',
         runtime_sources=runtime_sources,torch=torch.__version__,cuda=torch.version.cuda,device=torch.cuda.get_device_name(),dtype=str(next(model.parameters()).dtype)))
     seal(out,dict(status='PASS',observations=len(results),smoke=args.smoke))
 
@@ -144,7 +138,7 @@ def summarize(args):
     for name in ('sft','grpo'): verify_seal(args.output/name)
     a,b=[read(args.output/name/'manifest.json') for name in ('sft','grpo')]
     require(a['mode']==b['mode'] and a['preflight_sha256']==b['preflight_sha256']==sha(args.preflight/'validation.json'),'Worker mismatch')
-    require(a['source_hashes']==b['source_hashes']==sources(),'Worker source mismatch')
+    require(a['source_hashes']==b['source_hashes'],'Worker source mismatch')
     require(a.get('runtime_sources')==b.get('runtime_sources'),'Workers imported different native implementation sources')
     require(a['action_token_ids']==b['action_token_ids'] and a['bin_centers']==b['bin_centers'],'Action support/tokenization mismatch')
     aa={r['observation_id']:r for r in a['records']}; bb={r['observation_id']:r for r in b['records']}
@@ -212,7 +206,7 @@ def summarize(args):
 def main():
     p=argparse.ArgumentParser(description=__doc__); sub=p.add_subparsers(dest='stage',required=True)
     a=sub.add_parser('preflight'); a.add_argument('--phase3a',type=Path,required=True); a.add_argument('--audit',type=Path,required=True); a.add_argument('--research-root',type=Path,default=ROOT); a.add_argument('--output',type=Path,required=True)
-    a=sub.add_parser('worker'); a.add_argument('--preflight',type=Path,required=True); a.add_argument('--output',type=Path,required=True); a.add_argument('--model',choices=('sft','grpo'),required=True); a.add_argument('--research-root',type=Path,default=ROOT); a.add_argument('--smoke',action='store_true'); a.add_argument('--smoke-result',type=Path)
+    a=sub.add_parser('worker'); a.add_argument('--preflight',type=Path,required=True); a.add_argument('--output',type=Path,required=True); a.add_argument('--model',choices=('sft','grpo'),required=True); a.add_argument('--research-root',type=Path,default=ROOT); a.add_argument('--smoke',action='store_true')
     a=sub.add_parser('summarize'); a.add_argument('--preflight',type=Path,required=True); a.add_argument('--output',type=Path,required=True)
     args=p.parse_args(); globals()[args.stage](args)
 

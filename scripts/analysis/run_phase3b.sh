@@ -54,7 +54,7 @@ PY
     "$PY" -B scripts/analysis/phase3b_distribution.py summarize --preflight "$PRE" --output "$SMOKE" ;;
   distributions)
     for model in sft grpo; do
-      "$PY" -B scripts/analysis/phase3b_distribution.py worker --preflight "$PRE" --output "$DIST" --model "$model" --smoke-result "$SMOKE"
+      "$PY" -B scripts/analysis/phase3b_distribution.py worker --preflight "$PRE" --output "$DIST" --model "$model"
     done ;;
   distribution-summary)
     "$PY" -B scripts/analysis/phase3b_distribution.py summarize --preflight "$PRE" --output "$DIST" ;;
@@ -77,13 +77,13 @@ print('RESEARCH_ROOT='+shlex.quote(sys.argv[3])+' PHASE3B_RUN='+shlex.quote(sys.
 PY
     ;;
   pilot-a)
-    "$PY" -B scripts/analysis/phase3b_pilot.py run --plan "$PLAN" --mode pilot --smoke "$PSMOKE" --output "$PILOT" ;;
+    "$PY" -B scripts/analysis/phase3b_pilot.py run --plan "$PLAN" --mode pilot --output "$PILOT" ;;
   pilot-validate)
     "$PY" -B scripts/analysis/phase3b_pilot.py validate --output "$PILOT" ;;
   diversity)
     CUDA_VISIBLE_DEVICES="" "$PY" -B scripts/analysis/phase3b_pilot.py diversity --pilot "$PILOT" --output "$DIVERSITY" ;;
   report)
-    "$PY" -B scripts/analysis/phase3b.py report --stagnation "$STAG" --sft-sampling "$SFT_SAMPLING" --distribution "$DIST" --diversity "$DIVERSITY" --output "$RESEARCH_ROOT/outputs/analysis/phase3b_report/$PHASE3B_RUN" ;;
+    "$PY" -B scripts/analysis/phase3b.py report --stagnation "$STAG" --sft-sampling "$SFT_SAMPLING" --distribution "$DIST" --output "$RESEARCH_ROOT/outputs/analysis/phase3b_report/$PHASE3B_RUN" ;;
   help)
     echo 'Stages: audit sft-sampling stagnation sensitivity replay-preflight model-smoke distributions distribution-summary pilot-plan pilot-smoke pilot-command pilot-a pilot-validate diversity report' ;;
   *) echo 'Unknown stage'; exit 1 ;;

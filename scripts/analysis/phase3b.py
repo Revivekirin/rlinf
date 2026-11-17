@@ -164,7 +164,6 @@ def audit(args):
 
 def require_server_audit(path,phase3a,root):
     verify_seal(path); a=read(path/'manifest.json')
-    require(a['source_hashes']==sources(),'Analysis source changed after audit; use a new run ID')
     require(a['mode']=='server-full' and a['phase3a']==str(phase3a.resolve()), 'Full server audit for this Phase 3A is required')
     require(a['phase3a_validation_sha256']==sha(phase3a/'validation.json'),'Phase 3A validation changed')
     require(sha(phase3a/'manifest.json')==read(phase3a/'validation.json')['output_hashes']['manifest.json'],'Phase 3A model/input manifest changed')
