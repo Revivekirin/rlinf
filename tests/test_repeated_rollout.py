@@ -1,6 +1,8 @@
 """CPU-only repeated-rollout planning, storage and resume contracts."""
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -114,6 +116,19 @@ class RepeatedRolloutTests(unittest.TestCase):
             with patch.object(pilot,'verify_phase3a',return_value=self.fixture_info):
                 with self.assertRaises(ValueError): pilot.repeat_plan(args)
 
+    def test_long_expansion_plan_is_preparation_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); args,_=self.fixture(root)
+            args.output=root/'long-20-plan'; args.repeats=20
+            with patch.object(pilot,'verify_phase3a',return_value=self.fixture_info): pilot.repeat_plan(args)
+            pl=read(args.output/'manifest.json')
+            self.assertEqual((pl['expected'],len(pl['jobs'])),(400,400))
+            self.assertEqual(pilot.repeat_seed('libero_10',8,0,20),20200800)
+            run_args=argparse.Namespace(plan=args.output,audit=root/'audit',output=root/'run',
+                                        research_root=ROOT,smoke=False,resume=False)
+            with patch.object(pilot,'repeat_preflight'):
+                with self.assertRaisesRegex(ValueError,'preparation only'): pilot.repeat_run(run_args)
+
     def test_partial_complete_resume_and_corruption(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); args,pl=self.fixture(root,tasks=(8,),trials=(0,),seeds=[3101,3102])
@@ -175,6 +190,29 @@ class RepeatedRolloutTests(unittest.TestCase):
                 pilot.repeat_run(run_args)
             self.assertEqual(pilot.repeat_validate_state(out,pl)['status'],'COMPLETE_VALID')
 
+    def test_full_resume_reuses_partial_smoke_without_duplicate_rollouts(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); args,pl=self.fixture(root)
+            out=self.run_root(root,args,pl)
+            smoke=[j for j in pl['jobs'] if j['episode_id']=='libero_10-t08-i00' and j['policy']=='sft'][:2]
+            for job in smoke: self.add_episode(out,pl,job)
+            calls=[]
+            def load_model(_root,_phase3a,policy):
+                calls.append(policy)
+                model=object()
+                return model,model,pl['protocols'][policy]['model_config']
+            def collect(_args,_pl,job,_model,_cfg):
+                return self.add_episode(out,pl,job,entry=False)
+            run_args=argparse.Namespace(plan=args.output,audit=root/'audit',output=out,
+                                        research_root=ROOT,smoke=False,resume=True)
+            fake_torch=types.SimpleNamespace(cuda=types.SimpleNamespace(empty_cache=lambda: None))
+            with patch.object(pilot,'repeat_preflight'),patch('phase3b_distribution.load_model',new=load_model),\
+                 patch.object(pilot,'collect_repeat_job',new=collect),patch.dict(sys.modules,{'torch':fake_torch}):
+                pilot.repeat_run(run_args)
+            self.assertEqual(calls,['sft','grpo'])
+            self.assertEqual(pilot.repeat_validate_state(out,pl)['status'],'COMPLETE_VALID')
+            self.assertEqual(len(list((out/'jobs').iterdir())),100)
+
     def test_recovery_and_same_seed_replay_fixture(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td); args,pl=self.fixture(root,tasks=(8,),trials=(0,),policies=('grpo',),seeds=[3101])
@@ -191,6 +229,23 @@ class RepeatedRolloutTests(unittest.TestCase):
                 with np.load(first/name,allow_pickle=False) as a,np.load(replay/name,allow_pickle=False) as b:
                     self.assertEqual(a.files,b.files)
                     for key in a.files: np.testing.assert_array_equal(a[key],b[key])
+
+    def test_explicit_one_time_retry_preserves_incomplete_job(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); args,pl=self.fixture(root,tasks=(8,),trials=(0,),policies=('sft',),seeds=[3101])
+            out=self.run_root(root,args,pl); job=pl['jobs'][0]
+            partial=out/'jobs'/job['job_id']; partial.mkdir(); (partial/'partial.txt').write_text('preserve')
+            run_args=argparse.Namespace(plan=args.output,audit=root/'audit',output=out,
+                                        research_root=ROOT,smoke=False,resume=True,retry_incomplete=True)
+            def collect(_args,_pl,_job,_model,_cfg): return self.add_episode(out,pl,job,entry=False)
+            fake_torch=types.SimpleNamespace(cuda=types.SimpleNamespace(empty_cache=lambda: None))
+            with patch.object(pilot,'repeat_preflight'),\
+                 patch('phase3b_distribution.load_model',new=lambda *_:(object(),object(),pl['protocols']['sft']['model_config'])),\
+                 patch.object(pilot,'collect_repeat_job',new=collect),patch.dict(sys.modules,{'torch':fake_torch}):
+                pilot.repeat_run(run_args)
+            self.assertEqual((out/'interrupted'/job['job_id']/'partial.txt').read_text(),'preserve')
+            self.assertEqual(read(out/'entries'/(job['job_id']+'.json'))['provenance'],'retry_after_incomplete')
+            self.assertEqual(pilot.repeat_validate_state(out,pl)['status'],'COMPLETE_VALID')
 
     def test_corrupted_state_and_cross_policy_initial_mismatch(self):
         with tempfile.TemporaryDirectory() as td:
@@ -210,6 +265,26 @@ class RepeatedRolloutTests(unittest.TestCase):
             with (second/'states.npz').open('wb') as f: np.savez_compressed(f,**states)
             entry['hashes']['states.npz']=sha(second/'states.npz'); entry_path.write_text(json.dumps(entry))
             with self.assertRaises((ValueError,AssertionError)): pilot.repeat_validate_state(out,pl,partial=True)
+
+    def test_repeat_pilot_diversity_and_progress(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td); args,pl=self.fixture(root)
+            phase3a=root/'phase3a'; save(phase3a/'manifest.json',{'expert_root':str(root/'expert')})
+            out=self.run_root(root,args,pl)
+            for job in pl['jobs']: self.add_episode(out,pl,job)
+            progress_args=argparse.Namespace(plan=args.output,output=out)
+            stream=io.StringIO()
+            with contextlib.redirect_stdout(stream): pilot.repeat_progress(progress_args)
+            progress=json.loads(stream.getvalue())
+            self.assertEqual((progress['expected_jobs'],progress['completed_entries'],progress['pending_jobs']),(100,100,0))
+            fake_analysis=types.SimpleNamespace(path_statistics=lambda xyz:{'path_length':0.0})
+            fake_variation=types.SimpleNamespace(variation=lambda paths:{'world_pairs':[0.0]})
+            report_args=argparse.Namespace(pilot=out,output=root/'diversity')
+            with patch.object(pilot,'legacy',return_value=(fake_analysis,fake_variation)):
+                pilot.diversity(report_args)
+            result=read(report_args.output/'validation.json')
+            self.assertEqual((result['status'],result['episodes'],result['states'],result['pairs']),('PASS',100,10,450))
+            self.assertIn('| t08 | i04 |', (report_args.output/'summary.md').read_text())
 
 
 if __name__=='__main__': unittest.main()

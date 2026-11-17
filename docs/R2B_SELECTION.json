@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "status": "PREPARED_NOT_RUN",
+  "selection_rule": "Use task indices 3 and 8 and initial-state indices 0 and 1 in each suite, fixed before observing repeat-pilot outcomes.",
+  "suites": ["libero_goal", "libero_spatial", "libero_10"],
+  "task_ids_per_suite": [3, 8],
+  "trial_ids_per_task": [0, 1],
+  "policies": ["sft", "grpo"],
+  "sampling_repeats": 10,
+  "seed_rule": "100000*suite_index + 100*task_id + trial_id + 1000000*replicate, replicate 1..10",
+  "expected_jobs_per_suite": 80,
+  "expected_jobs_total": 240,
+  "interpretation": "Fixed-index stratification is a diagnostic sample, not a representative estimate for all LIBERO tasks. No expansion job is authorized to run automatically."
+}

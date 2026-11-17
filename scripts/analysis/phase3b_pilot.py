@@ -1,6 +1,7 @@
 """Legacy GRPO pilot and SFT/GRPO repeated rollouts via nominal collect_episode."""
 from __future__ import annotations
 import argparse
+import collections
 import itertools
 import json
 import gc
@@ -9,6 +10,8 @@ import inspect
 import hashlib
 import shlex
 import os
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import numpy as np
@@ -24,7 +27,7 @@ REPEAT_REPOS = {'sft':'RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora',
 
 
 def repeat_seed(suite,task,trial,replicate):
-    require(suite in REPEAT_SUITES and 0<=task<10 and 0<=trial<5 and 1<=replicate<=5,
+    require(suite in REPEAT_SUITES and 0<=task<10 and 0<=trial<5 and 1<=replicate<=20,
             'Repeated-rollout seed bounds')
     return 100000*REPEAT_SUITES.index(suite)+100*task+trial+1000000*replicate
 
@@ -53,7 +56,7 @@ def repeat_plan(args):
     require(args.sampling_seeds is None or args.repeats is None,'Choose seeds or repeats')
     if args.sampling_seeds is None:
         repeats=5 if args.repeats is None else args.repeats
-        require(1<=repeats<=5,'Repeats must be 1..5')
+        require(1<=repeats<=20,'Repeats must be 1..20')
     else:
         require(args.sampling_seeds and len(set(args.sampling_seeds))==len(args.sampling_seeds)
                 and all(0<=s<2**32 for s in args.sampling_seeds),'Invalid sampling seeds')
@@ -243,6 +246,7 @@ def collect_repeat_job(args,pl,job,model,model_cfg):
 def repeat_run(args):
     repeat_preflight(args)
     pl=read(args.plan/'manifest.json')
+    require(pl['expected']<=100,'Expansion plans are preparation only; pilot reuse is required before collection')
     jobs=pl['jobs']
     if args.smoke:
         sample=[j for j in jobs if j['suite']=='libero_10' and j['task_id']==8 and j['trial_id']==0]
@@ -251,6 +255,8 @@ def repeat_run(args):
         require(len(seeds)==2,'Smoke needs two sampling seeds')
         jobs=[j for j in sample if j['policy_seed'] in seeds]
         require(len(jobs)==4,'Smoke must contain four jobs')
+    # Stable policy-major order avoids repeatedly loading the two large checkpoints.
+    jobs=sorted(jobs,key=lambda j:REPEAT_POLICIES.index(j['policy']))
     manifest=dict(plan=str(args.plan.resolve()),plan_sha256=sha(args.plan/'validation.json'),
                   experiment_hash=pl['experiment_hash'])
     if args.output.exists():
@@ -266,6 +272,7 @@ def repeat_run(args):
         jid=job['job_id']; entry_file=args.output/'entries'/(jid+'.json')
         dest=args.output/'jobs'/jid; episode_path=dest/'rollouts'/job['episode_id']
         try:
+            retried=False
             if entry_file.exists():
                 entry=read(entry_file)
                 require(Path(entry['episode_path']).resolve()==episode_path.resolve(),'Entry points outside this run')
@@ -273,24 +280,44 @@ def repeat_run(args):
                 print('SKIP',jid,flush=True)
                 continue
             if dest.exists():
-                require(episode_path.is_dir(),f'Incomplete job preserved for inspection: {dest}')
-                entry=dict(job_id=jid,episode_path=str(episode_path.resolve()),
-                    protocol_hash=job['protocol_hash'],hashes={n:sha(episode_path/n) for n in REPEAT_ARTIFACTS},
-                    provenance='recovered_after_interruption')
-                check_repeat_entry(entry,job,pl); save(entry_file,entry)
-                print('RECOVER',jid,flush=True)
-                continue
+                if episode_path.is_dir() and all((episode_path/n).is_file() for n in REPEAT_ARTIFACTS):
+                    entry=dict(job_id=jid,episode_path=str(episode_path.resolve()),
+                        protocol_hash=job['protocol_hash'],hashes={n:sha(episode_path/n) for n in REPEAT_ARTIFACTS},
+                        provenance='recovered_after_interruption')
+                    check_repeat_entry(entry,job,pl); save(entry_file,entry)
+                    print('RECOVER',jid,flush=True)
+                    continue
+                require(getattr(args,'retry_incomplete',False),
+                        f'Incomplete job preserved for inspection: {dest}; use --retry-incomplete for one archived retry')
+                archived=args.output/'interrupted'/jid
+                require(not archived.exists(),f'One archived retry already used: {archived}')
+                archived.parent.mkdir(exist_ok=True)
+                dest.rename(archived)
+                retried=True
+                print('ARCHIVE_INCOMPLETE',jid,archived,flush=True)
             if loaded_policy!=job['policy']:
                 if model is not None:
+                    import torch
                     model=None; model_core=None
                     gc.collect()
-                    import torch
                     torch.cuda.empty_cache()
+                    if hasattr(torch.cuda,'mem_get_info'):
+                        free,total=torch.cuda.mem_get_info()
+                        print('GPU_BEFORE_LOAD',job['policy'],'free_mib',free//(1024*1024),
+                              'total_mib',total//(1024*1024),flush=True)
                 model,model_core,model_cfg=load_model(args.research_root,Path(pl['phase3a']),job['policy'])
+                import torch
+                if hasattr(torch.cuda,'mem_get_info'):
+                    free,total=torch.cuda.mem_get_info()
+                    print('GPU_AFTER_LOAD',job['policy'],'free_mib',free//(1024*1024),
+                          'total_mib',total//(1024*1024),flush=True)
                 loaded_policy=job['policy']
+            print('START',jid,'policy',job['policy'],'task',job['task_id'],
+                  'seed',job['policy_seed'],flush=True)
             path=collect_repeat_job(args,pl,job,model,model_cfg)
             entry=dict(job_id=jid,episode_path=str(path.resolve()),protocol_hash=job['protocol_hash'],
-                hashes={n:sha(path/n) for n in REPEAT_ARTIFACTS},provenance='new')
+                hashes={n:sha(path/n) for n in REPEAT_ARTIFACTS},
+                provenance='retry_after_incomplete' if retried else 'new')
             m=check_repeat_entry(entry,job,pl)
             save(entry_file,entry)
             print('COMPLETE',jid,'success',m['success'],'steps',m['episode_length'],flush=True)
@@ -314,6 +341,32 @@ def repeat_validate(args):
         raise SystemExit(1) from exc
     print(json.dumps(result,indent=2))
     if result['status']=='FAILED': raise SystemExit(1)
+
+
+def repeat_progress(args):
+    """Fast operational snapshot; counts are not a substitute for validation."""
+    pl=read(args.plan/'manifest.json'); jobs=pl['jobs']; output=args.output
+    expected={j['job_id'] for j in jobs}
+    entries=output/'entries'; failures=output/'failures'
+    found={p.stem for p in entries.glob('*.json')} if entries.is_dir() else set()
+    failed={p.stem for p in failures.glob('*.json')} if failures.is_dir() else set()
+    require(found<=expected and failed<=expected,'Unknown progress entry')
+    pending=[j for j in sorted(jobs,key=lambda j:REPEAT_POLICIES.index(j['policy']))
+             if j['job_id'] not in found]
+    latest=max((p for p in entries.glob('*.json')),key=lambda p:p.stat().st_mtime,default=None) if entries.is_dir() else None
+    current=pending[0] if pending else None
+    commit=subprocess.run(['git','rev-parse','HEAD'],cwd=ROOT,capture_output=True,text=True,check=True).stdout.strip()
+    result=dict(experiment_id=output.name,
+        start_timestamp=datetime.fromtimestamp((output/'manifest.json').stat().st_mtime,timezone.utc).isoformat(),
+        git_commit=commit,upstream_commit=pl['experiment']['upstream_commit'],
+        model_revision={p:pl['protocols'][p]['checkpoint_revision'] for p in pl['protocols']},
+        expected_jobs=len(jobs),completed_entries=len(found),failed_job_logs=len(failed),
+        pending_jobs=len(pending),next_job=current['job_id'] if current else None,
+        current_policy=current['policy'] if current else None,current_task=current['task_id'] if current else None,
+        current_seed=current['policy_seed'] if current else None,
+        last_successful_episode=latest.stem if latest else None,
+        counts_are_validated=False)
+    print(json.dumps(result,indent=2))
 
 
 def seed_for(task,trial,replicate):
@@ -460,7 +513,104 @@ def validate(args):
     else: print('PILOT_A_INTEGRITY: PASS',len(entries))
 
 
+def repeat_diversity(args):
+    """Read-only trajectory summary for the completed 100-job repeat pilot."""
+    run=args.pilot.resolve(); mf=read(run/'manifest.json'); plan_dir=Path(mf['plan'])
+    verify_seal(plan_dir); pl=read(plan_dir/'manifest.json')
+    state=repeat_validate_state(run,pl)
+    require(state['status']=='COMPLETE_VALID' and len(pl['jobs'])==100,'Repeat pilot requires 100 validated jobs')
+    experiment=pl['experiment']
+    require(experiment['suite']=='libero_10' and set(experiment['task_ids'])=={3,8}
+            and set(experiment['trial_ids'])==set(range(5)) and set(experiment['policies'])==set(REPEAT_POLICIES)
+            and experiment['repeats']==5,'Unexpected repeat pilot grid')
+    p=Path(pl['phase3a']); expert_root=Path(read(p/'manifest.json')['expert_root'])
+    a,v=legacy(expert_root)
+    files={str(plan_dir/'validation.json'):sha(plan_dir/'validation.json'),str(run/'manifest.json'):sha(run/'manifest.json')}
+    grouped=collections.defaultdict(list); episode_rows=[]; provenance=collections.Counter()
+    for job in pl['jobs']:
+        entry_path=run/'entries'/(job['job_id']+'.json'); entry=read(entry_path)
+        m=check_repeat_entry(entry,job,pl); path=Path(entry['episode_path'])
+        files[str(entry_path)]=sha(entry_path)
+        for name,digest in entry['hashes'].items():
+            file=path/name; require(sha(file)==digest,'Repeat pilot artifact changed')
+            files[str(file)]=digest
+        with np.load(path/'states.npz',allow_pickle=False) as z: xyz=z['robot0_eef_pos'].copy()
+        require(len(xyz)==m['episode_length']+1,'EEF path length mismatch')
+        row=dict(job_id=job['job_id'],episode_id=job['episode_id'],policy=job['policy'],
+                 task_id=job['task_id'],trial_id=job['trial_id'],policy_seed=job['policy_seed'],
+                 success=bool(m['success']),steps=int(m['episode_length']),
+                 initial_state_sha256=job['initial_state_sha256'],
+                 path_length_m=float(a.path_statistics(xyz)['path_length']),
+                 initial_xyz=xyz[0].tolist(),final_xyz=xyz[-1].tolist(),provenance=entry['provenance'])
+        episode_rows.append(row); grouped[(job['episode_id'],job['policy'])].append((row,xyz))
+        provenance[entry['provenance']]+=1
+    pair_rows=[]; state_rows=[]
+    for task in (3,8):
+        for trial in range(5):
+            eid=f'libero_10-t{task:02d}-i{trial:02d}'
+            by_policy={policy:grouped[(eid,policy)] for policy in REPEAT_POLICIES}
+            for policy,items in by_policy.items():
+                require(len(items)==5 and len({row['policy_seed'] for row,_ in items})==5,
+                        'Repeat pilot state/policy seed grid mismatch')
+            distances={}
+            for policy,items in by_policy.items():
+                values=[]
+                for (left,x),(right,y) in itertools.combinations(items,2):
+                    rms=float(v.variation([x,y])['world_pairs'][0]); require(np.isfinite(rms),'Nonfinite pairwise RMS')
+                    pair_rows.append(dict(episode_id=eid,pair_type=policy,job_a=left['job_id'],job_b=right['job_id'],
+                                          success_a=left['success'],success_b=right['success'],trajectory_rms_32_m=rms))
+                    values.append(rms)
+                require(len(values)==10,'Within-policy pair count')
+                distances[policy]=values
+            cross=[]
+            for left,x in by_policy['sft']:
+                for right,y in by_policy['grpo']:
+                    rms=float(v.variation([x,y])['world_pairs'][0]); require(np.isfinite(rms),'Nonfinite cross-policy RMS')
+                    pair_rows.append(dict(episode_id=eid,pair_type='cross',job_a=left['job_id'],job_b=right['job_id'],
+                                          success_a=left['success'],success_b=right['success'],trajectory_rms_32_m=rms))
+                    cross.append(rms)
+            state_rows.append(dict(task_id=task,trial_id=trial,episode_id=eid,
+                sft_success=sum(row['success'] for row,_ in by_policy['sft']),
+                grpo_success=sum(row['success'] for row,_ in by_policy['grpo']),
+                trajectories_per_policy=5,sft_pairwise_rms_mean_m=float(np.mean(distances['sft'])),
+                grpo_pairwise_rms_mean_m=float(np.mean(distances['grpo'])),
+                cross_pairwise_rms_mean_m=float(np.mean(cross))))
+    require(len(episode_rows)==100 and len(pair_rows)==450 and len(state_rows)==10,'Repeat pilot analysis count')
+    distance_summary={}
+    for kind in ('sft','grpo','cross'):
+        values=[r['trajectory_rms_32_m'] for r in pair_rows if r['pair_type']==kind]
+        distance_summary[kind]=dict(mean_m=float(np.mean(values)),median_m=float(np.median(values)),
+                                    p25_m=float(np.quantile(values,.25)),p75_m=float(np.quantile(values,.75)))
+    two_or_more_successes={p:sum(row[p+'_success']>=2 for row in state_rows) for p in REPEAT_POLICIES}
+    mixed_outcome_states={p:sum(0<row[p+'_success']<5 for row in state_rows) for p in REPEAT_POLICIES}
+    failure_logs=list((run/'failures').glob('*.json')) if (run/'failures').is_dir() else []
+    out=fresh(args.output)
+    csv_save(out/'per_episode.csv',episode_rows)
+    csv_save(out/'pairwise_diversity.csv',pair_rows)
+    csv_save(out/'same_state_summary.csv',state_rows)
+    table='| Task | Initial state | SFT success | GRPO success | SFT RMS (m) | GRPO RMS (m) | Cross RMS (m) |\n|---|---|---:|---:|---:|---:|---:|'
+    for row in state_rows:
+        table+=f"\n| t{row['task_id']:02d} | i{row['trial_id']:02d} | {row['sft_success']}/5 | {row['grpo_success']}/5 | {row['sft_pairwise_rms_mean_m']:.6g} | {row['grpo_pairwise_rms_mean_m']:.6g} | {row['cross_pairwise_rms_mean_m']:.6g} |"
+    report=(f"# SFT/GRPO repeated rollout pilot\n\nSource run: {run}. Expected: 100; validated: 100; missing: 0; duplicate job IDs: 0.\n"
+            f"Total simulator steps: {sum(r['steps'] for r in episode_rows)}. Provenance: {dict(provenance)}. "
+            f"Preserved failure logs: {len(failure_logs)}.\n\n"
+            +table+"\n\nRMS uses the original 32-point normalized-index EEF comparison. Different indices do not imply matching events. "
+            "Success-conditioned and failure-conditioned diversity are reserved for R3.\n\n"
+            f"Pairwise RMS distributions: {json.dumps(distance_summary,sort_keys=True)}.\n\n"
+            f"States with at least two successes: {two_or_more_successes}. Mixed success/failure states: {mixed_outcome_states}.\n")
+    (out/'summary.md').write_text(report)
+    save(out/'manifest.json',dict(source_run=str(run),plan=str(plan_dir),input_hashes=files,
+        source_hashes=sources(),metric='legacy task_plots.variation world_pairs, 32-point normalized-index EEF RMS',
+        scope='Unconditional within-policy and cross-policy pairs; no success-conditioned inference'))
+    for file,digest in files.items(): require(sha(file)==digest,'Pilot input changed during analysis')
+    seal(out,dict(status='PASS',episodes=100,states=10,pairs=450,total_steps=sum(r['steps'] for r in episode_rows)))
+    print(out/'summary.md')
+
+
 def diversity(args):
+    if 'mode' not in read(args.pilot/'manifest.json'):
+        repeat_diversity(args)
+        return
     verify_seal(args.pilot); mf=read(args.pilot/'manifest.json'); require(mf['mode']=='pilot','Diversity requires full Pilot A')
     pl=read(Path(mf['plan'])/'manifest.json'); p=Path(pl['phase3a']); expert_root=Path(read(p/'manifest.json')['expert_root'])
     a,v=legacy(expert_root); out=fresh(args.output); entries=read(args.pilot/'index.json')['entries']
@@ -525,11 +675,14 @@ def main():
     a=sub.add_parser('repeat-run'); a.add_argument('--plan',type=Path,required=True); a.add_argument('--audit',type=Path,required=True)
     a.add_argument('--output',type=Path,required=True); a.add_argument('--research-root',type=Path,default=ROOT)
     a.add_argument('--smoke',action='store_true'); a.add_argument('--resume',action='store_true')
+    a.add_argument('--retry-incomplete',action='store_true')
     a=sub.add_parser('repeat-validate'); a.add_argument('--output',type=Path,required=True)
     a.add_argument('--partial',action='store_true'); a.add_argument('--jobs',nargs='+')
+    a=sub.add_parser('repeat-progress'); a.add_argument('--plan',type=Path,required=True)
+    a.add_argument('--output',type=Path,required=True)
     args=p.parse_args()
     dispatch={'repeat-plan':repeat_plan,'repeat-preflight':repeat_preflight,
-              'repeat-run':repeat_run,'repeat-validate':repeat_validate}
+              'repeat-run':repeat_run,'repeat-validate':repeat_validate,'repeat-progress':repeat_progress}
     (dispatch[args.stage] if args.stage in dispatch else globals()[args.stage])(args)
 
 if __name__=='__main__': main()
