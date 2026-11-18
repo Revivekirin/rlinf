@@ -37,8 +37,16 @@ def main() -> None:
         counts = protocol["task_counts"]
         if set(counts) - set(SUITES):
             raise ValueError(f"Unexpected suite: {set(counts) - set(SUITES)}")
-        expected = {eid(suite, task_id) for suite, count in counts.items()
-                    for task_id in range(count)}
+        # Smoke manifests retain official suite sizes in task_counts, while
+        # selecting only the first spatial task. Keep their protocol hashes
+        # unchanged so already collected episodes remain resumable.
+        if protocol["storage_mode"] == "raw" and protocol["selected_task_count"] == 1:
+            if set(counts) != {"libero_spatial"}:
+                raise ValueError(f"Unexpected smoke suites: {sorted(counts)}")
+            expected = {eid("libero_spatial", 0)}
+        else:
+            expected = {eid(suite, task_id) for suite, count in counts.items()
+                        for task_id in range(count)}
         if len(expected) != protocol["selected_task_count"]:
             raise ValueError(f"Task count mismatch: {condition}")
         summary = summarize(condition_dir, expected, manifest["protocol_hash"])
