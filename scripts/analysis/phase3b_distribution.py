@@ -67,6 +67,54 @@ def load_model(root,phase3a,model):
     return obj,core,OmegaConf.to_container(cfg,resolve=True)
 
 
+def capture_native_logits(model,core,bank,language,seed,check_equivalence=False):
+    """One audited native forward; return full action-bin logits and processed inputs."""
+    import torch
+    lo=core.vocab_size-core.config.n_action_bins; hi=core.vocab_size
+    n=core.action_dim*core.num_action_chunks
+    captured=[]
+    def hook(module,inputs,output):
+        value=output.logits[:, -n-1:-1,lo:hi].detach().float().cpu().numpy().copy()
+        require(value.shape==(1,56,hi-lo) and np.isfinite(value).all(),'Invalid captured action logits')
+        captured.append(value[0])
+    def native(sample=False):
+        torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+        random.seed(seed); np.random.seed(seed)
+        env=dict(main_images=torch.from_numpy(bank['main_image_policy'].copy()).unsqueeze(0),
+                 states=torch.from_numpy(bank['proprio_policy'].copy()).unsqueeze(0),
+                 task_descriptions=[language])
+        if 'wrist_image_policy' in bank:
+            env['wrist_images']=torch.from_numpy(bank['wrist_image_policy'].copy()).unsqueeze(0)
+        with torch.inference_mode():
+            actions,result=model.predict_action_batch(
+                env_obs=env,do_sample=sample,temperature=1.6 if sample else 1.0,
+                top_k=-1,top_p=1.0,calculate_logprobs=False,calculate_values=False)
+        def arr(x):
+            return x.detach().float().cpu().numpy() if x.dtype==torch.bfloat16 else x.detach().cpu().numpy()
+        return arr(actions)[0],{k:arr(v)[0] for k,v in result['forward_inputs'].items()}
+    plain=native() if check_equivalence else None
+    handle=core.language_model.register_forward_hook(hook)
+    try: actions,fi=native()
+    finally: handle.remove()
+    require(len(captured)==1,'Native inference must have one language forward')
+    logits=captured[0]
+    require(actions.shape==(8,7) and np.isfinite(actions).all(),'Invalid native decoded actions')
+    require(np.array_equal(fi['action_tokens'].reshape(-1),logits.argmax(-1)+lo),
+            'Hook action slice does not reproduce native greedy tokens')
+    if plain is not None:
+        require(np.array_equal(actions,plain[0]) and
+                all(np.array_equal(fi[k],plain[1][k]) for k in fi),
+                'Instrumentation changes greedy behavior')
+        plain_sample=native(True)
+        handle=core.language_model.register_forward_hook(hook)
+        try: hooked_sample=native(True)
+        finally: handle.remove()
+        require(np.array_equal(plain_sample[0],hooked_sample[0]) and
+                all(np.array_equal(plain_sample[1][k],hooked_sample[1][k]) for k in plain_sample[1]),
+                'Instrumentation changes stochastic behavior')
+    return logits,actions,fi,lo,hi
+
+
 def worker(args):
     verify_seal(args.preflight); pf=read(args.preflight/'manifest.json'); p=Path(pf['phase3a'])
     require(sha(Path(pf['audit'])/'validation.json')==pf['audit_sha256'],'Audit changed')
@@ -79,41 +127,14 @@ def worker(args):
     for component in (type(core),core._build_multimodal_attention,core._process_vision_features,type(core.input_processor)):
         path=Path(inspect.getfile(component)).resolve(); runtime_sources[str(path)]=sha(path)
     lo=core.vocab_size-core.config.n_action_bins; hi=core.vocab_size; n=core.action_dim*core.num_action_chunks
-    captured=[]
-    def hook(module,inputs,output):
-        v=output.logits[:, -n-1:-1,lo:hi].detach().float().cpu().numpy().copy()
-        require(v.shape==(1,56,hi-lo) and np.isfinite(v).all(),'Invalid captured action logits')
-        captured.append(v[0])
     results=[]
     for index,e in enumerate(entries):
         path=p/e['file']; require(sha(path)==e['file_sha256'],'Observation changed')
         with np.load(path,allow_pickle=False) as z: bank={k:v.copy() for k,v in z.items()}
         require(all(array_hash(v)==e['arrays'][k]['sha256'] for k,v in bank.items()),'Observation array changed')
-        def native(sample=False):
-            torch.manual_seed(3101+index); torch.cuda.manual_seed_all(3101+index); random.seed(3101+index); np.random.seed(3101+index)
-            env=dict(main_images=torch.from_numpy(bank['main_image_policy'].copy()).unsqueeze(0),
-                     states=torch.from_numpy(bank['proprio_policy'].copy()).unsqueeze(0),
-                     task_descriptions=[e['source_metadata']['language']])
-            if 'wrist_image_policy' in bank: env['wrist_images']=torch.from_numpy(bank['wrist_image_policy'].copy()).unsqueeze(0)
-            with torch.inference_mode():
-                actions,result=model.predict_action_batch(env_obs=env,do_sample=sample,temperature=1.6 if sample else 1.0,top_k=-1,top_p=1.0,calculate_logprobs=False,calculate_values=False)
-            def arr(x): return x.detach().float().cpu().numpy() if x.dtype==torch.bfloat16 else x.detach().cpu().numpy()
-            return arr(actions)[0],{k:arr(v)[0] for k,v in result['forward_inputs'].items()}
-        plain=native() if args.smoke or index==0 else None
-        captured.clear(); handle=core.language_model.register_forward_hook(hook)
-        try: actions,fi=native()
-        finally: handle.remove()
-        require(len(captured)==1,'Native inference must have one language forward')
-        logits=captured[0]
-        require(actions.shape==(8,7) and np.isfinite(actions).all(),'Invalid native decoded actions')
-        require(np.array_equal(fi['action_tokens'].reshape(-1),logits.argmax(-1)+lo),'Hook action slice does not reproduce native greedy tokens')
-        if plain:
-            require(np.array_equal(actions,plain[0]) and all(np.array_equal(fi[k],plain[1][k]) for k in fi),'Instrumentation changes greedy behavior')
-            # Sampling uses the same native path and seed, hook must not consume RNG.
-            plain_sample=native(True); handle=core.language_model.register_forward_hook(hook)
-            try: hooked_sample=native(True)
-            finally: handle.remove()
-            require(np.array_equal(plain_sample[0],hooked_sample[0]) and all(np.array_equal(plain_sample[1][k],hooked_sample[1][k]) for k in plain_sample[1]),'Instrumentation changes stochastic behavior')
+        logits,actions,fi,lo,hi=capture_native_logits(
+            model,core,bank,e['source_metadata']['language'],3101+index,
+            check_equivalence=args.smoke or index==0)
         tensors={k:array_hash(fi[k]) for k in ('input_ids','attention_mask','pixel_values')}
         saved_equal={k:array_hash(fi[k])==e['arrays'][k]['sha256'] for k in tensors}
         require(fi['input_ids'].shape==bank['input_ids'].shape,'Token position alignment changed')
