@@ -1,0 +1,1 @@
+"""Metadata-only benchmark inventories."""
