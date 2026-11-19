@@ -167,9 +167,9 @@ def main() -> None:
     checkpoint_dir, checkpoint_repo, checkpoint_revision = nominal.MODELS[kind]
     checkpoint = root / "checkpoints" / checkpoint_dir
     nominal.check_checkpoint_inventory(root, checkpoint, checkpoint_repo, checkpoint_revision)
-    load_lora = new_protocol and kind == "sft"
-    if load_lora and not (checkpoint / "lora_adapter/adapter_model.safetensors").is_file():
-        raise FileNotFoundError("SFT LoRA adapter missing")
+    # Published SFT and GRPO checkpoints are evaluated directly from model shards.
+    # The SFT adapter is a training artifact; loading it again changes the policy.
+    load_lora = False
     stats = json.loads((checkpoint / "dataset_statistics.json").read_text())
     if nominal.NORM_KEY not in stats:
         raise ValueError("LIBERO-130 normalization statistics missing")

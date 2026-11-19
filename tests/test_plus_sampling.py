@@ -241,7 +241,7 @@ class PlusSamplingTests(unittest.TestCase):
                     "wait_steps": 15, "action_chunks": 8,
                     "do_sample": condition.endswith("stochastic"),
                     "temperature": 1.6 if condition.endswith("stochastic") else 1.0,
-                    "lora_applied": condition.startswith("sft"),
+                    "lora_applied": False,
                     "checkpoint_revision": condition.split("_")[0] + "-revision",
                     "sampling_mode": condition.split("_")[1],
                 }

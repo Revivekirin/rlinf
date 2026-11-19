@@ -21,7 +21,7 @@ The command creates `manifests/libero_plus/pilot_v1.json`, `manifests/libero_plu
 
 The existing PLUS collector default remains `rlinf-520` over all 10,030 tasks. The new pilot requires both `--task-manifest` and explicit `--horizon-protocol lerobot-suite`. Horizon is set separately in both `max_episode_steps` and `max_steps_per_rollout_epoch`: Spatial 280, Object 280, Goal 300, Long 520. `nominal_collect.collect_episode` still performs the same action-chunk inference (8 actions per query), executes individual actions, stops immediately on success, and stops on the suite action-step cap. RLinf's 15 zero-action reset settling steps happen before the collector's episode action count. These horizons match the public LeRobot LIBERO-PLUS guide; other reset and wrapper details may differ from LeRobot.
 
-All four conditions share the same manifest IDs, simulator seed 0, reset path, suite horizon, success signal, and policy seed formula `100000*suite_index+zero_based_task_id`. The condition-specific decoding is `do_sample=False, temperature=1.0` or `do_sample=True, temperature=1.6`, both with `top_k=-1`, `top_p=1.0`. The new pilot applies the SFT checkpoint's LoRA adapter and does not apply LoRA to GRPO. This differs from the existing legacy PLUS collector path, which keeps its previous `is_lora=False` behavior for backward compatibility. Checkpoint identity, file inventory, normalization key, camera count, and adapter presence are checked before a new run.
+All four conditions share the same manifest IDs, simulator seed 0, reset path, suite horizon, success signal, and policy seed formula `100000*suite_index+zero_based_task_id`. The condition-specific decoding is `do_sample=False, temperature=1.0` or `do_sample=True, temperature=1.6`, both with `top_k=-1`, `top_p=1.0`. Both published checkpoints are evaluated directly with `is_lora=False`, as the RLinf model card directs. The SFT checkpoint contains an adapter training artifact, but loading it again changes the evaluation policy. Checkpoint identity, file inventory, normalization key, and camera count are checked before a new run. The earlier `plus-pilot-suite-v1` SFT run used `is_lora=True`; preserve it as a separate exploratory run and do not mix its episodes with this corrected protocol.
 
 The environment reset still does **not** apply the saved `.pruned_init` file. The recorded initial-state hash covers selected EEF/gripper observations and camera pixels, not complete simulator state. Run `check_plus_initial_state.py` separately before interpreting four-way paired physical starts. That smoke test requires simulator access and is not run by manifest generation.
 
@@ -35,12 +35,12 @@ export EMBODIED_PATH="$ROOT/upstream/RLinf/examples/embodiment"
 export LIBERO_TYPE=plus LIBERO_SUFFIX=none MUJOCO_GL=egl
 export MAGICK_HOME="$ROOT/conda-envs/libmagick-plus"
 export LD_LIBRARY_PATH="$MAGICK_HOME/lib:${LD_LIBRARY_PATH:-}"
-mkdir -p "$ROOT/outputs/libero_plus/plus-pilot-suite-v1/logs"
+mkdir -p "$ROOT/outputs/libero_plus/plus-pilot-suite-nolora-v2/logs"
 
-nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-v1 --condition sft_deterministic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-v1/logs/sft_deterministic.log" 2>&1 &
-nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-v1 --condition sft_stochastic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-v1/logs/sft_stochastic.log" 2>&1 &
-nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-v1 --condition grpo_deterministic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-v1/logs/grpo_deterministic.log" 2>&1 &
-nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-v1 --condition grpo_stochastic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-v1/logs/grpo_stochastic.log" 2>&1 &
+nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-nolora-v2 --condition sft_deterministic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-nolora-v2/logs/sft_deterministic.log" 2>&1 &
+nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-nolora-v2 --condition sft_stochastic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-nolora-v2/logs/sft_stochastic.log" 2>&1 &
+nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-nolora-v2 --condition grpo_deterministic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-nolora-v2/logs/grpo_deterministic.log" 2>&1 &
+nohup "$PY" "$ROOT/scripts/evaluate/plus_collect.py" --research-root "$ROOT" --run-id plus-pilot-suite-nolora-v2 --condition grpo_stochastic --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json" --horizon-protocol lerobot-suite > "$ROOT/outputs/libero_plus/plus-pilot-suite-nolora-v2/logs/grpo_stochastic.log" 2>&1 &
 ```
 
 These are **four example launch commands**, not a recommendation to run them simultaneously on one 24 GiB GPU. Run sequentially or schedule separately; the active full evaluation must finish or remain isolated. To resume a partial condition, repeat its command with `--resume`. A new pilot run rejects an existing condition directory; resume requires the saved protocol hash and selected manifest to match. Pilot runs use a distinct run ID and condition directories.
@@ -63,7 +63,7 @@ After all four conditions complete:
 
 ```bash
 "$PY" "$ROOT/scripts/evaluate/plus_validate.py" \
-  "$ROOT/outputs/libero_plus/plus-pilot-suite-v1" \
+  "$ROOT/outputs/libero_plus/plus-pilot-suite-nolora-v2" \
   --task-manifest "$ROOT/manifests/libero_plus/pilot_v1.json"
 ```
 

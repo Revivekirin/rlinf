@@ -77,7 +77,7 @@ def analyze_run(run_dir: Path, pilot: dict, *, repetitions: int = 500) -> tuple[
             protocol.get("action_chunks") != 8 or
             protocol.get("do_sample") != condition.endswith("stochastic") or
             protocol.get("temperature") != (1.6 if condition.endswith("stochastic") else 1.0) or
-            protocol.get("lora_applied") != condition.startswith("sft")):
+            protocol.get("lora_applied") is not False):
             raise ValueError(f"Pilot protocol mismatch: {condition}")
         found = set()
         for path in sorted((condition_dir / "rollouts").glob("*")):
