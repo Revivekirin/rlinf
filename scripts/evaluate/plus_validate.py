@@ -7,6 +7,9 @@ import csv
 import json
 from collections import defaultdict
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from plus_collect import CONDITIONS, SUITES, atomic_json, eid, read_episode, summarize
 
@@ -24,8 +27,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--allow-incomplete", action="store_true")
+    parser.add_argument("--task-manifest", type=Path,
+                        help="Analyze a completed manifest-based pilot without changing legacy output")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
+    if args.task_manifest:
+        if args.allow_incomplete:
+            parser.error("Pilot statistics require all four conditions to be complete")
+        from scripts.benchmark.plus_results import analyze_run, write_results
+        pilot = json.loads(args.task_manifest.read_text(encoding="utf-8"))
+        result, episodes, paired = analyze_run(run_dir, pilot)
+        write_results(run_dir, result, episodes, paired)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
     all_rows = []
     per_condition = {}
     for condition in CONDITIONS:
