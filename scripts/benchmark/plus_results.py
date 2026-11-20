@@ -52,12 +52,16 @@ def cluster_intervals(paired: list[dict], *, repetitions: int = 500,
             for k, v in draws.items()}
 
 
-def analyze_run(run_dir: Path, pilot: dict, *, repetitions: int = 500) -> tuple[dict, list[dict], list[dict]]:
+def validated_records(run_dir: Path, pilot: dict, *,
+                      exclude_episode_ids: frozenset[str] = frozenset()) -> tuple[list[dict], list[dict]]:
+    """Validate all source records; exclude only audited unpaired starts."""
     if content_hash(pilot) != pilot.get("manifest_content_sha256"):
         raise ValueError("Pilot manifest hash mismatch")
     expected = {episode_id(r["suite"], r["task_id"] - 1): r for r in pilot["tasks"]}
     if len(expected) != len(pilot["tasks"]):
         raise ValueError("Duplicate pilot variant")
+    if not exclude_episode_ids <= set(expected):
+        raise ValueError("Excluded episode is absent from pilot manifest")
     episodes = []
     paired = []
     by_condition = {}
@@ -132,12 +136,14 @@ def analyze_run(run_dir: Path, pilot: dict, *, repetitions: int = 500) -> tuple[
         if found != set(expected):
             raise ValueError(f"Incomplete pilot condition: {condition}: {len(found)}/{len(expected)}")
         by_condition[condition] = {r["episode_id"]: r for r in episodes if r["condition"] == condition}
-    original_population = Counter((r["suite"], r["perturbation_category"], r["original_task"])
-                                  for r in pilot["tasks"])
     for eid, task in sorted(expected.items()):
         rows = [by_condition[c][eid] for c in CONDITIONS]
         identity = {(r["suite"], r["task_id"], r["task_name"],
                      r["policy_seed"], r["initial_state_sha256"]) for r in rows}
+        if eid in exclude_episode_ids:
+            if len(identity) == 1:
+                raise ValueError(f"Excluded episode has matching start: {eid}")
+            continue
         if len(identity) != 1:
             raise ValueError(f"Paired episode identity/observed reset differs: {eid}")
         p = task["pilot_inclusion_probability"]
@@ -151,6 +157,13 @@ def analyze_run(run_dir: Path, pilot: dict, *, repetitions: int = 500) -> tuple[
                        "pilot_inclusion_probability": p,
                        "original_population": round(2 / p),
                        **{c: int(by_condition[c][eid]["success"]) for c in CONDITIONS}})
+    return [r for r in episodes if r["episode_id"] not in exclude_episode_ids], paired
+
+
+def analyze_run(run_dir: Path, pilot: dict, *, repetitions: int = 500) -> tuple[dict, list[dict], list[dict]]:
+    episodes, paired = validated_records(run_dir, pilot)
+    original_population = Counter((r["suite"], r["perturbation_category"], r["original_task"])
+                                  for r in pilot["tasks"])
     if any(original_population[k] != 2 for k in original_population):
         raise ValueError("Bootstrap requires two pilot variants per original-task cell")
 
