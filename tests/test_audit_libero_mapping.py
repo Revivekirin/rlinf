@@ -32,7 +32,7 @@ class Benchmark:
 
 class MappingTests(unittest.TestCase):
     def make_factory(self):
-        names = ("libero_goal", "libero_spatial", "libero_10")
+        names = ("libero_goal", "libero_spatial", "libero_10", "libero_object")
         all_tasks = [
             Task(f"task-{i}", f"suite-{i//10}", f"{i}.bddl", f"{i}.init", f"do {i}")
             for i in range(130)
@@ -56,6 +56,12 @@ class MappingTests(unittest.TestCase):
         factory("libero_goal")().states[0] = [np.array([999, x]) for x in range(5)]
         with self.assertRaisesRegex(ValueError, "init-state contents differ"):
             audit(factory)
+
+    def test_object_only_mapping_matches_all_suite(self):
+        result = audit(self.make_factory(), suites=("libero_object",))
+        self.assertEqual(len(result["tasks"]), 10)
+        self.assertEqual(result["tasks"][0]["libero_130_task_id"], 30)
+        self.assertEqual(result["tasks"][0]["suite"], "libero_object")
 
     def test_hash_includes_shape(self):
         self.assertNotEqual(

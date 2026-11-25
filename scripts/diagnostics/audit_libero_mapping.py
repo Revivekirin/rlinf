@@ -1,4 +1,4 @@
-"""Verify LIBERO-130 task identity against Goal, Spatial, and Long suites.
+"""Verify LIBERO-130 task identity against selected original LIBERO suites.
 
 Run in the pinned RLinf virtual environment from the RLinf checkout.  The
 comparison uses the installed benchmark's task metadata and the actual first
@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 SUITES = ("libero_goal", "libero_spatial", "libero_10")
-EXPECTED_COUNTS = {"libero_130": 130, **dict.fromkeys(SUITES, 10)}
+OBJECT_SUITE = "libero_object"
 
 
 def state_hash(state: object) -> str:
@@ -39,9 +39,10 @@ def task_identity(task: object) -> tuple[str, str, str, str]:
     )
 
 
-def audit(factory, *, trials: int = 5) -> dict:
-    benchmarks = {name: factory(name)() for name in EXPECTED_COUNTS}
-    for name, expected in EXPECTED_COUNTS.items():
+def audit(factory, *, trials: int = 5, suites: tuple[str, ...] = SUITES) -> dict:
+    expected_counts = {"libero_130": 130, **dict.fromkeys(suites, 10)}
+    benchmarks = {name: factory(name)() for name in expected_counts}
+    for name, expected in expected_counts.items():
         actual = benchmarks[name].get_num_tasks()
         if actual != expected:
             raise ValueError(f"{name}: expected {expected} tasks, found {actual}")
@@ -52,7 +53,7 @@ def audit(factory, *, trials: int = 5) -> dict:
         by_identity.setdefault(task_identity(all_suite.get_task(tid)), []).append(tid)
 
     rows = []
-    for name in SUITES:
+    for name in suites:
         suite = benchmarks[name]
         for subset_tid in range(suite.get_num_tasks()):
             task = suite.get_task(subset_tid)
@@ -102,6 +103,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--trials", type=int, default=5)
+    parser.add_argument("--suite", choices=(*SUITES, OBJECT_SUITE),
+                        help="Audit one suite; default retains the historical three-suite mapping")
     args = parser.parse_args()
     if args.trials < 1:
         parser.error("--trials must be positive")
@@ -110,7 +113,8 @@ def main() -> None:
 
     from rlinf.envs.sim.libero.utils import get_benchmark_overridden
 
-    result = audit(get_benchmark_overridden, trials=args.trials)
+    result = audit(get_benchmark_overridden, trials=args.trials,
+                   suites=(args.suite,) if args.suite else SUITES)
     payload = json.dumps(result, indent=2, sort_keys=True) + "\n"
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():

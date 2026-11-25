@@ -59,9 +59,16 @@ def main() -> None:
     args = parser.parse_args()
     manifest = json.loads((args.run_dir / "manifest.json").read_text())
     protocol_hash = manifest["protocol_hash"]
-    trials = int(manifest["protocol"]["trials_per_task"])
+    protocol = manifest["protocol"]
+    trials = int(protocol["trials_per_task"])
     task_count = 1 if trials == 1 else 10
-    expected = {episode_id(s, t, i) for s in SUITES for t in range(task_count) for i in range(trials)}
+    selected_suites = tuple(protocol.get("selected_suites", SUITES))
+    if not selected_suites or any(s not in (*SUITES, "libero_object") for s in selected_suites):
+        raise ValueError("Unknown or empty nominal suite selection")
+    expected = (set(protocol["selected_episode_ids"])
+                if "selected_episode_ids" in protocol else
+                {episode_id(s, t, i) for s in selected_suites
+                 for t in range(task_count) for i in range(trials)})
     summary = summarize_run(args.run_dir, expected, protocol_hash)
     for path in sorted((args.run_dir / "rollouts").iterdir()):
         if path.is_dir() and not path.name.startswith(".partial-"):

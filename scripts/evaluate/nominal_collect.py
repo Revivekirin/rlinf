@@ -25,6 +25,8 @@ from nominal_storage import episode_id, summarize_run, write_episode
 UPSTREAM_COMMIT = "e05f71e80d14ab4b55e5027ee739cfbcc6b12b9d"
 NORM_KEY = "libero_130_no_noops_trajall"
 SUITES = ("libero_goal", "libero_spatial", "libero_10")
+OBJECT_SUITE = "libero_object"
+ALL_SUITES = (*SUITES, OBJECT_SUITE)
 CONDITIONS = {
     "sft_deterministic": ("sft", False, 1.0, True),
     "sft_base_only_deterministic": ("sft", False, 1.0, False),
@@ -217,11 +219,15 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--smoke-goal", action="store_true",
                         help="Only Goal task 0, initial state 0")
+    parser.add_argument("--suite", choices=ALL_SUITES,
+                        help="Collect only this suite; default retains the historical three suites")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if args.smoke_goal:
+        if args.suite:
+            parser.error("--smoke-goal cannot be combined with --suite")
         args.smoke = True
-    selected_suites = ("libero_goal",) if args.smoke_goal else SUITES
+    selected_suites = ("libero_goal",) if args.smoke_goal else ((args.suite,) if args.suite else SUITES)
     if os.environ.get("LIBERO_TYPE", "standard") != "standard":
         parser.error("Only original LIBERO is supported")
     root = args.research_root.resolve()
@@ -233,7 +239,7 @@ def main() -> None:
         parser.error("Invalid run ID")
     mapping = json.loads(args.mapping.read_text())
     trials = 1 if args.smoke else 5
-    rows = check_mapping(mapping, SUITES, trials)
+    rows = check_mapping(mapping, selected_suites, trials)
     checkpoint_kind, sampling, temperature, load_lora = CONDITIONS[args.condition]
     checkpoint_dir, checkpoint_repo, checkpoint_revision = MODELS[checkpoint_kind]
     checkpoint = root / "checkpoints" / checkpoint_dir
@@ -279,6 +285,8 @@ def main() -> None:
     }
     if args.smoke_goal:
         protocol["selected_episode_ids"] = ["libero_goal-t00-i00"]
+    if args.suite:
+        protocol["selected_suites"] = list(selected_suites)
     protocol_hash = sha256_json(protocol)
     run_dir = root / "outputs" / "nominal" / args.run_id
     if run_dir.exists() and not args.resume:
@@ -303,7 +311,8 @@ def main() -> None:
     core = model.get_base_model() if hasattr(model, "get_base_model") else model
     if core.unnorm_key != NORM_KEY or core.vision_backbone.get_num_images_in_input() != 1:
         raise ValueError("Loaded model normalization key or camera count differs")
-    for suite_index, suite in enumerate(SUITES):
+    for suite in selected_suites:
+        suite_index = ALL_SUITES.index(suite)
         suite_pending = [item for item in pending if item.startswith(suite + "-")]
         if not suite_pending:
             continue
