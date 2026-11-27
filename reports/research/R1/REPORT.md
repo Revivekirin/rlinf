@@ -44,4 +44,6 @@ Server attempt `r1-20261127T061448Z-3098626` stopped before rendering when PLUS 
 
 Server retry `r1-pairs-20261127T061948Z-3098626` reached the first physical-state check and failed with zero valid pairs. The next retry synchronizes derived poses before freezing the baseline and uses MuJoCo's camera and light kinematics for each camera update. State equality remains exact, with separate checks after camera update and RGB rendering. The revised path passed 25 local research tests and awaits server verification.
 
+Server retry `r1-pairs-20261127T062331Z-3098626` used the standard LIBERO interpreter and was blocked during PLUS asset discovery. Invoke the PLUS interpreter explicitly with `"$PY"` for both the full run and `--pairs-only`, even if the shell prompt shows a PLUS environment.
+
 **Next** · Verify the full server run and its offline gate before judging R2 readiness. The smoke tests artifact and inference validity for its selected cases.
