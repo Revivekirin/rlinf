@@ -215,6 +215,8 @@ def main() -> None:
     parser.add_argument("--research-root", type=Path, required=True)
     parser.add_argument("--mapping", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--output-root", type=Path,
+                        help="Directory for nominal run outputs (default: RESEARCH_ROOT/outputs/nominal)")
     parser.add_argument("--condition", choices=CONDITIONS, required=True)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--smoke-goal", action="store_true",
@@ -254,8 +256,11 @@ def main() -> None:
         raise ValueError(f"Missing normalization statistics: {NORM_KEY}")
     if not Path(os.environ.get("EMBODIED_PATH", "")).resolve() == upstream / "examples" / "embodiment":
         raise ValueError("EMBODIED_PATH does not point to pinned RLinf examples/embodiment")
-    if shutil_disk_free(root) < 10 * 2**30:
-        raise OSError("Less than 10 GiB free disk space")
+    output_root = (args.output_root if args.output_root is not None
+                   else root / "outputs" / "nominal").resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    if shutil_disk_free(output_root) < 10 * 2**30:
+        raise OSError(f"Less than 10 GiB free disk space at output root: {output_root}")
     import torch
     from omegaconf import OmegaConf
     from rlinf.envs.sim.libero.libero_env import LiberoEnv
@@ -288,7 +293,7 @@ def main() -> None:
     if args.suite:
         protocol["selected_suites"] = list(selected_suites)
     protocol_hash = sha256_json(protocol)
-    run_dir = root / "outputs" / "nominal" / args.run_id
+    run_dir = output_root / args.run_id
     if run_dir.exists() and not args.resume:
         raise FileExistsError(f"Run exists; use --resume only after inspecting it: {run_dir}")
     if not run_dir.exists() and args.resume:

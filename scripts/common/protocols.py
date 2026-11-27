@@ -9,7 +9,7 @@ def protocol_hash(p):
 
 
 def episode_id(suite: str, task_id: int, trial_id: int) -> str:
-    if suite not in {"libero_goal", "libero_spatial", "libero_10"}:
+    if suite not in {"libero_goal", "libero_spatial", "libero_10", "libero_object"}:
         raise ValueError(f"Unsupported suite: {suite}")
     if task_id < 0 or trial_id < 0:
         raise ValueError("Task and trial IDs must be nonnegative")

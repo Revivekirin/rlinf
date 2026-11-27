@@ -48,9 +48,13 @@ nvidia-smi
 df -h "$RESEARCH_ROOT"
 ```
 
-The process requires an idle GPU and at least 10 GiB free in the collector's
-preflight. The 450-episode output may require substantially more than this;
-check disk usage during execution. Do not stop other users' Ray processes.
+The process requires an idle GPU and at least 10 GiB free on the output
+filesystem in the collector's preflight. By default, output is written under
+`$RESEARCH_ROOT/outputs/nominal`. If that filesystem is full, pass
+`--output-root /path/to/persistent/storage/nominal` to each collector command
+and give the validator a run directory under that same path. The 450-episode
+output may require substantially more than 10 GiB; check disk usage during
+execution. Do not stop other users' Ray processes.
 
 ```bash
 "$VENV_PY" "$RESEARCH_ROOT/scripts/diagnostics/audit_libero_mapping.py" \

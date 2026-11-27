@@ -1,0 +1,11 @@
+{
+  "phase3a_manifest": "outputs/analysis/nominal_behavior/phase3a-20261109T082746Z-1415246/manifest.json",
+  "sft": {
+    "repo_id": "RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora",
+    "revision": "a4ea91b3897648f3c1395e5221edb40b8f53d1a4"
+  },
+  "grpo": {
+    "repo_id": "RLinf/RLinf-OpenVLAOFT-LIBERO-130",
+    "revision": "473954241c8148bc9a1bf9ed547a74523e4a7d41"
+  }
+}
