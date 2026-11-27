@@ -46,4 +46,6 @@ Server retry `r1-pairs-20261127T061948Z-3098626` reached the first physical-stat
 
 Server retry `r1-pairs-20261127T062331Z-3098626` used the standard LIBERO interpreter and was blocked during PLUS asset discovery. Invoke the PLUS interpreter explicitly with `"$PY"` for both the full run and `--pairs-only`, even if the shell prompt shows a PLUS environment.
 
+Server retry `r1-pairs-20261127T062447Z-3098626` used the PLUS interpreter and reproduced the earlier traceback byte-for-byte. The error text comes from the earlier simulator source. Before retrying, verify that the imported `scripts.research.data.simulator_state` resolves to this checkout and contains the `mj_camlight` update.
+
 **Next** · Verify the full server run and its offline gate before judging R2 readiness. The smoke tests artifact and inference validity for its selected cases.
