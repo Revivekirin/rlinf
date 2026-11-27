@@ -123,6 +123,23 @@ def snapshot(env):
     }}
 
 
+def update_camera(sim, index, settings, camera_kinematics):
+    for key, value in settings.items():
+        getattr(sim.model, key)[index] = value
+    camera_kinematics(getattr(sim.model, "_model", sim.model),
+                      getattr(sim.data, "_data", sim.data))
+
+
+def require_same_state(expected, actual, state_id, camera_id, phase):
+    changed = sorted(key for key in expected.keys() | actual.keys()
+                     if key not in expected or key not in actual
+                     or expected[key].dtype != actual[key].dtype
+                     or not np.array_equal(expected[key], actual[key]))
+    if changed:
+        raise ValueError(f"Physical state changed for {state_id}/{camera_id} during {phase}: "
+                         + ", ".join(changed))
+
+
 def collect(root, out, assets, staging):
     from scripts.research.cli.audit import UPSTREAM_PIN
 
@@ -138,6 +155,8 @@ def collect(root, out, assets, staging):
         "classification_sha256": sha(plus / "benchmark/task_classification.json"),
     })
     create, problem_info, image, quat_axis, suite, torch = simulator(plus, out, assets, staging)
+    from mujoco import mj_camlight
+
     controller_config = suite.load_controller_config(default_controller="OSC_POSE")
     if controller_config.get("control_delta") is not True:
         raise ValueError("Expected delta OSC_POSE convention")
@@ -173,6 +192,8 @@ def collect(root, out, assets, staging):
                 env.set_init_state(np.asarray(initial[trial]))
                 for _ in range(15):
                     env.step(np.zeros(7))
+                # Synchronize derived poses with the final settled qpos before freezing.
+                env.sim.forward()
                 frozen = snapshot(env)
                 active_controller = env.robots[0].controller
                 model_hash = model_fingerprint(env.sim, index)
@@ -180,14 +201,12 @@ def collect(root, out, assets, staging):
                 for variant in (None, *spec.variants):
                     label = "canonical" if variant is None else f"plus-{variant['id']}"
                     settings = nominal if variant is None else targets[variant["id"]]
-                    for key, value in settings.items():
-                        getattr(env.sim.model, key)[index] = value
-                    env.sim.forward()
+                    update_camera(env.sim, index, settings, mj_camlight)
+                    require_same_state(frozen, snapshot(env), state_id, label, "camera update")
                     env._update_observables(force=True)
                     raw = env.env._get_observations()
                     current = snapshot(env)
-                    if any(not np.array_equal(frozen[key], current[key]) for key in frozen):
-                        raise ValueError(f"Physical state changed during camera rendering: {state_id}")
+                    require_same_state(frozen, current, state_id, label, "observation rendering")
                     if model_fingerprint(env.sim, index) != model_hash or env.robots[0].controller is not active_controller:
                         raise ValueError(f"Model properties or controller changed during camera rendering: {state_id}")
                     obs_id = f"{state_id}-{label}"
@@ -220,9 +239,7 @@ def collect(root, out, assets, staging):
                                       "kind": "same_state_replay_of_plus_camera"})
                     record["data"] = save_arrays(out / f"{obs_id}.npz", arrays)
                     observations[obs_id] = record
-                for key, value in nominal.items():
-                    getattr(env.sim.model, key)[index] = value
-                env.sim.forward()
+                update_camera(env.sim, index, nominal, mj_camlight)
     result = {"schema": SCHEMA, "observations": observations, "pairs": pairs,
               "plus_commit": PLUS_COMMIT, "rlinf_commit": UPSTREAM_PIN,
               "simulator": {"robosuite": suite.__version__, "mujoco": __import__("mujoco").__version__},

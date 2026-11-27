@@ -2,13 +2,14 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 
 from scripts.research.core.artifacts import write_json
 from scripts.research.data.camera_pairs import OBSERVATIONS, PAIRS, TASKS, load_arrays, plan, save_arrays, validate_pair
 from scripts.research.data.validation import verify_dataset
-from scripts.research.data.simulator_state import stage_plus_package
+from scripts.research.data.simulator_state import require_same_state, stage_plus_package, update_camera
 from scripts.research.metrics.action import differences
 from scripts.research.models.checkpoint import AuditBlocked
 
@@ -16,6 +17,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CameraPairTests(unittest.TestCase):
+    def test_camera_update_uses_native_camera_kinematics_and_reports_state_changes(self):
+        raw_model, raw_data = object(), object()
+        sim = SimpleNamespace(
+            model=SimpleNamespace(_model=raw_model, cam_pos=np.zeros((2, 3))),
+            data=SimpleNamespace(_data=raw_data),
+        )
+        calls = []
+        update_camera(sim, 1, {"cam_pos": [1, 2, 3]}, lambda *args: calls.append(args))
+        self.assertEqual(calls, [(raw_model, raw_data)])
+        np.testing.assert_array_equal(sim.model.cam_pos, [[0, 0, 0], [1, 2, 3]])
+        frozen = {"state_time": np.array(0.1), "state_qpos": np.zeros(2)}
+        require_same_state(frozen, frozen, "s00", "canonical", "camera update")
+        with self.assertRaisesRegex(ValueError, "s00/plus-1 during observation rendering: state_qpos"):
+            require_same_state(frozen, dict(frozen, state_qpos=np.ones(2)),
+                               "s00", "plus-1", "observation rendering")
+
     def test_staged_plus_sources_resolve_sibling_asset_paths(self):
         plus = ROOT / "upstream/LIBERO-plus/libero/libero"
         with tempfile.TemporaryDirectory() as tmp:
