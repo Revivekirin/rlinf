@@ -21,8 +21,12 @@ def main():
     parser.add_argument("--checkpoint-root", type=Path, default=Path("/nfs4/jhkim/repos/rlinf/checkpoints"))
     parser.add_argument("--assets", type=Path, help="Override installed PLUS asset directory")
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--pairs-only", action="store_true", help="Render and validate physical pairs without CUDA inference")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pairs-from", type=Path, help="Reuse an immutable R1-1 PASS run without rendering")
+    mode.add_argument("--pairs-only", action="store_true", help="Render and validate physical pairs without CUDA inference")
     args = parser.parse_args()
+    if args.pairs_from and args.assets:
+        parser.error("--assets applies only when rendering pairs")
     sys.dont_write_bytecode = True
     from scripts.research.core.artifacts import create_run
 

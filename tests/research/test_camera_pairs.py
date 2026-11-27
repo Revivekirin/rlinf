@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from scripts.common.integrity import sha
 from scripts.research.core.artifacts import write_json
+from scripts.research.core.r1 import import_pairs
 from scripts.research.data.camera_pairs import OBSERVATIONS, PAIRS, TASKS, load_arrays, plan, save_arrays, validate_pair
 from scripts.research.data.validation import verify_dataset
 from scripts.research.data.simulator_state import require_same_state, stage_plus_package, update_camera
@@ -141,6 +143,24 @@ class CameraPairTests(unittest.TestCase):
                                           "kind": "same_state_replay_of_plus_camera"})
             write_json(path / "dataset.json", dict(versions, observations=observations, pairs=pairs))
             self.assertEqual(len(verify_dataset(path)["pairs"]), PAIRS)
+            write_json(path / "provenance.json", {"r0_3_status_sha256": "baseline"})
+            write_json(path / "status.json", {
+                "stage": "R1", "schema": 1, "status": "PARTIAL", "gates": {"R1-1": "PASS"},
+                "valid_pairs": PAIRS, "observations": OBSERVATIONS,
+                "evidence_sha256": {file.name: sha(file) for file in path.iterdir()},
+            })
+            with tempfile.TemporaryDirectory() as copied:
+                target = Path(copied)
+                with self.assertRaisesRegex(ValueError, "different R0-3 baseline"):
+                    import_pairs(path, target, "other")
+                provenance = import_pairs(path, target, "baseline")
+                self.assertEqual(provenance["dataset_sha256"], sha(target / "dataset.json"))
+                self.assertEqual(verify_dataset(target), verify_dataset(path))
+            with (path / observations[key]["data"]["file"]).open("ab") as stream:
+                stream.write(b"bad")
+            with tempfile.TemporaryDirectory() as copied:
+                with self.assertRaisesRegex(ValueError, "Run evidence hash mismatch"):
+                    import_pairs(path, Path(copied), "baseline")
             (path / observations[key]["data"]["file"]).unlink()
             with self.assertRaises(FileNotFoundError):
                 verify_dataset(path)

@@ -2,6 +2,7 @@
 
 import gc
 from pathlib import Path
+from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 
 import numpy as np
@@ -107,15 +108,51 @@ def capture(root, out, r0, prior, dataset, checkpoint_root):
     write_json(out / "comparisons.json", comparisons(dataset, captured, identity))
 
 
+def sealed_files(run, status):
+    files = {p.relative_to(run).as_posix(): p for p in run.rglob("*")
+             if p.is_file() and p != run / "status.json"}
+    if files.keys() != status["evidence_sha256"].keys():
+        raise ValueError("Run evidence inventory mismatch")
+    for key, path in files.items():
+        if path.is_symlink() or sha(path) != status["evidence_sha256"][key]:
+            raise ValueError(f"Run evidence hash mismatch: {key}")
+    return files
+
+
+def import_pairs(source, out, r0_status_sha):
+    status_path = source / "status.json"
+    status = read_json(status_path)
+    if (status["stage"] != "R1" or status["schema"] != SCHEMA or status["status"] != "PARTIAL"
+            or status["gates"]["R1-1"] != "PASS"
+            or (status["valid_pairs"], status["observations"]) != (PAIRS, OBSERVATIONS)):
+        raise ValueError("Pair source must be a sealed PARTIAL run with R1-1 PASS")
+    files = sealed_files(source, status)
+    if read_json(files["provenance.json"])["r0_3_status_sha256"] != r0_status_sha:
+        raise ValueError("Pair source refers to a different R0-3 baseline")
+    dataset = verify_dataset(source)
+    names = {"plan.json", "dataset.json"} | {row["data"]["file"] for row in dataset["observations"].values()}
+    for name in sorted(names):
+        with files[name].open("rb") as stream, (out / name).open("xb") as target:
+            copyfileobj(stream, target)
+        if sha(out / name) != status["evidence_sha256"][name]:
+            raise ValueError(f"Copied pair evidence hash mismatch: {name}")
+    return {"run_id": source.name, "status_sha256": sha(status_path),
+            "dataset_sha256": status["evidence_sha256"]["dataset.json"]}
+
+
 def execute(root, out, args, status):
     r0 = args.r0_3.resolve()
     prior = prior_evidence(root, r0)
-    write_json(out / "provenance.json", {
+    provenance = {
         "schema": SCHEMA, "r0_3": r0.name, "r0_3_status_sha256": sha(r0 / "status.json"),
         "expected_pairs": PAIRS, "expected_observations": OBSERVATIONS,
-    })
+    }
     with TemporaryDirectory(prefix="rlinf-r1-plus-") as staging:
-        collect(root, out, args.assets, Path(staging))
+        if args.pairs_from:
+            provenance["pair_source"] = import_pairs(args.pairs_from.resolve(), out, provenance["r0_3_status_sha256"])
+        write_json(out / "provenance.json", provenance)
+        if not args.pairs_from:
+            collect(root, out, args.assets, Path(staging))
         dataset = verify_dataset(out)
         status["gates"]["R1-1"] = "PASS"
         status.update(valid_pairs=PAIRS, observations=OBSERVATIONS)
@@ -136,14 +173,10 @@ def validate_run(root, run):
             or (status["valid_pairs"], status["observations"], status["captured_observations_per_model"])
             != (PAIRS, OBSERVATIONS, OBSERVATIONS)):
         raise ValueError("Incomplete or invalid R1 run")
-    files = {p.relative_to(run).as_posix(): p for p in run.rglob("*")
-             if p.is_file() and p != run / "status.json"}
-    if files.keys() != status["evidence_sha256"].keys():
-        raise ValueError("Run evidence inventory mismatch")
-    for key, path in files.items():
-        if path.is_symlink() or sha(path) != status["evidence_sha256"][key]:
-            raise ValueError(f"Run evidence hash mismatch: {key}")
+    sealed_files(run, status)
     evidence = read_json(run / "provenance.json")
+    if "pair_source" in evidence and sha(run / "dataset.json") != evidence["pair_source"]["dataset_sha256"]:
+        raise ValueError("Copied dataset differs from the parent run")
     path = Path(evidence["r0_3"])
     if (path.name != evidence["r0_3"] or not path.name.startswith("r0-3-")
             or evidence["schema"] != SCHEMA or evidence["expected_pairs"] != PAIRS
