@@ -94,3 +94,53 @@ def load_r0_1(root, evidence):
         "accumulator": "float64",
     }
     return inventory, metadata, runtime, details
+
+
+def load_r0_2(evidence, expected_r0_1, runtime, details):
+    from collections import Counter
+
+    status_path = evidence / "status.json"
+    status = read_json(status_path)
+    if (status.get("stage"), status.get("status"), status.get("dry_run")) != ("R0-2", "PASS", False):
+        raise ValueError("R0-2 evidence must record a successful numerical comparison")
+    files = status["evidence_sha256"]
+    if set(files) != {"provenance.json", "comparison.json", "modules.csv", "tensors.csv"}:
+        raise ValueError("R0-2 evidence file set differs from the comparison CLI")
+    for name, digest in files.items():
+        if sha(evidence / name) != digest:
+            raise ValueError(f"R0-2 evidence hash mismatch: {name}")
+
+    provenance = read_json(evidence / "provenance.json")
+    for field in ("r0_1_sha256", "runtime", "module_topology", "architecture", "checkpoints"):
+        # JSON uses arrays for the module path/type pairs.
+        expected = expected_r0_1 if field == "r0_1_sha256" else details[field]
+        if field == "module_topology":
+            expected = {key: list(value) for key, value in expected.items()}
+        if provenance[field] != expected:
+            raise ValueError(f"R0-2 provenance mismatch: {field}")
+    data = read_json(evidence / "comparison.json")
+    rows = data["tensors"]
+    counts = dict(Counter(row["status"] for row in rows))
+    aligned = [row for row in rows if row["status"] in {"identical", "changed"}]
+    if counts != status["tensor_status_counts"] or counts != data["counts"]:
+        raise ValueError("R0-2 comparison status counts disagree")
+    if set(counts) - {"identical", "changed", "extra_sft", "extra_grpo", "unmapped"}:
+        raise ValueError("R0-2 contains incompatible runtime tensors")
+    names = {row["canonical_name"] for row in aligned}
+    if len(aligned) != len(names) or names != runtime["sft"].keys() or names != runtime["grpo"].keys():
+        raise ValueError("R0-2 coverage differs from the verified runtime policy")
+    for row in aligned:
+        name = row["canonical_name"]
+        group, shape, _ = runtime["sft"][name]
+        if (row["checkpoint_key"] != name or row["module"] != group
+                or row["sft_shape"] != list(shape) or row["grpo_shape"] != list(shape)
+                or row["parameter_count"] != math.prod(shape)
+                or row["sft_storage_dtype"] != row["grpo_storage_dtype"]
+                or not 0 <= row["changed_count"] <= row["parameter_count"]
+                or (row["status"] == "changed") != (row["changed_count"] > 0)):
+            raise ValueError(f"Invalid aligned R0-2 tensor evidence: {name}")
+    total = data["modules"]["policy.total"]
+    for key in ("parameter_count", "changed_count"):
+        if sum(row[key] for row in aligned) != total[key]:
+            raise ValueError(f"R0-2 policy aggregate mismatch: {key}")
+    return {"status_sha256": sha(status_path), "files": files, "tensor_status_counts": counts}
