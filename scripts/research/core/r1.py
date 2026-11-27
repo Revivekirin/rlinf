@@ -2,6 +2,7 @@
 
 import gc
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -113,13 +114,14 @@ def execute(root, out, args, status):
         "schema": SCHEMA, "r0_3": r0.name, "r0_3_status_sha256": sha(r0 / "status.json"),
         "expected_pairs": PAIRS, "expected_observations": OBSERVATIONS,
     })
-    collect(root, out, args.assets)
-    dataset = verify_dataset(out)
-    status["gates"]["R1-1"] = "PASS"
-    status.update(valid_pairs=PAIRS, observations=OBSERVATIONS)
-    if args.pairs_only:
-        raise AuditBlocked("Pairs-only run finished. Model capture pending.")
-    capture(root, out, r0, prior, dataset, args.checkpoint_root.resolve())
+    with TemporaryDirectory(prefix="rlinf-r1-plus-") as staging:
+        collect(root, out, args.assets, Path(staging))
+        dataset = verify_dataset(out)
+        status["gates"]["R1-1"] = "PASS"
+        status.update(valid_pairs=PAIRS, observations=OBSERVATIONS)
+        if args.pairs_only:
+            raise AuditBlocked("Pairs-only run finished. Model capture pending.")
+        capture(root, out, r0, prior, dataset, args.checkpoint_root.resolve())
     status["gates"]["R1-2"] = "PASS"
     verify_capture(out, dataset, {role: {k: c[k] for k in ("repo_id", "revision")}
                                   for role, c in prior[1].items()}, prior[4])

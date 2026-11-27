@@ -8,12 +8,31 @@ import numpy as np
 from scripts.research.core.artifacts import write_json
 from scripts.research.data.camera_pairs import OBSERVATIONS, PAIRS, TASKS, load_arrays, plan, save_arrays, validate_pair
 from scripts.research.data.validation import verify_dataset
+from scripts.research.data.simulator_state import stage_plus_package
 from scripts.research.metrics.action import differences
+from scripts.research.models.checkpoint import AuditBlocked
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class CameraPairTests(unittest.TestCase):
+    def test_staged_plus_sources_resolve_sibling_asset_paths(self):
+        plus = ROOT / "upstream/LIBERO-plus/libero/libero"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            assets = root / "installed-assets"
+            scene = assets / "scenes/libero_tabletop_base_style.xml"
+            with self.assertRaisesRegex(AuditBlocked, "Required PLUS scene is missing"):
+                stage_plus_package(plus, root / "staging", assets)
+            scene.parent.mkdir(parents=True)
+            scene.write_text("<mujoco/>")
+            package = stage_plus_package(plus, root / "staging", assets)
+            source = Path("envs/bddl_base_domain.py")
+            self.assertEqual((package / source).read_bytes(), (plus / source).read_bytes())
+            sibling = (package / source).resolve().parent / "../assets/scenes" / scene.name
+            self.assertEqual(sibling.resolve(), scene.resolve())
+            self.assertEqual(sibling.read_text(), "<mujoco/>")
+
     def setUp(self):
         self.left = {
             "state_id": "state", "task": "task", "language": "instruction",

@@ -40,4 +40,6 @@ run_id="r1-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 Use `--assets /path/to/installed/PLUS/assets` if the installed asset directory is in a nonstandard location. For simulator-only preflight, add `--pairs-only` and use a separate run ID. This yields PARTIAL after successful pair validation.
 
+Server attempt `r1-20261127T061448Z-3098626` stopped before rendering when PLUS resolved its scene XML relative to the source checkout. The retry stages a temporary copy of the pinned Python package beside a link to the installed assets, which supplies the layout required by the scene and object loaders.
+
 **Next** · Verify the full server run and its offline gate before judging R2 readiness. The smoke tests artifact and inference validity for its selected cases.

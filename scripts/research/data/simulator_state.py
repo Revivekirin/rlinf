@@ -6,6 +6,7 @@ from importlib.machinery import ModuleSpec
 import importlib.util
 import os
 from pathlib import Path
+from shutil import copyfile
 import subprocess
 import sys
 from types import ModuleType
@@ -31,7 +32,21 @@ def revision(path, expected):
         raise ValueError(f"Pinned source mismatch: {path}")
 
 
-def simulator(plus, out, assets):
+def stage_plus_package(plus, staging, assets):
+    """Place pinned Python sources next to the installed read-only assets."""
+    scene = assets / "scenes/libero_tabletop_base_style.xml"
+    if not scene.is_file():
+        raise AuditBlocked(f"Required PLUS scene is missing: {scene}")
+    package_root = staging / "libero"
+    for source in plus.rglob("*.py"):
+        target = package_root / source.relative_to(plus)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(source, target)
+    (package_root / "assets").symlink_to(assets.resolve(), target_is_directory=True)
+    return package_root
+
+
+def simulator(plus, out, assets, staging):
     try:
         import robosuite
     except (ImportError, OSError) as exc:
@@ -48,17 +63,18 @@ def simulator(plus, out, assets):
     # and path configuration inside this process and this run directory.
     if "libero" in sys.modules:
         raise ValueError("Cannot load pinned PLUS after another LIBERO package")
+    package_root = stage_plus_package(plus, staging, assets)
     config = out / "libero-config"
     config.mkdir()
     write_json(config / "config.yaml", {
-        "benchmark_root": str(plus), "bddl_files": str(plus / "bddl_files"),
+        "benchmark_root": str(package_root), "bddl_files": str(plus / "bddl_files"),
         "init_states": str(plus / "init_files"), "assets": str(assets.resolve()),
         "datasets": str(out),
     })
     os.environ["LIBERO_CONFIG_PATH"] = str(config)
     os.environ["LIBERO_TYPE"] = "standard"  # RLinf image utilities resolve our pinned alias.
     package = ModuleType("libero")
-    package.__path__ = [str(plus.parent)]
+    package.__path__ = [str(package_root.parent)]
     package.__spec__ = ModuleSpec("libero", loader=None, is_package=True)
     package.__spec__.submodule_search_locations = package.__path__
     sys.modules["libero"] = package
@@ -107,7 +123,7 @@ def snapshot(env):
     }}
 
 
-def collect(root, out, assets):
+def collect(root, out, assets, staging):
     from scripts.research.cli.audit import UPSTREAM_PIN
 
     checkout = root / "upstream/LIBERO-plus"
@@ -121,7 +137,7 @@ def collect(root, out, assets):
         "plus_commit": PLUS_COMMIT, "rlinf_commit": UPSTREAM_PIN,
         "classification_sha256": sha(plus / "benchmark/task_classification.json"),
     })
-    create, problem_info, image, quat_axis, suite, torch = simulator(plus, out, assets)
+    create, problem_info, image, quat_axis, suite, torch = simulator(plus, out, assets, staging)
     controller_config = suite.load_controller_config(default_controller="OSC_POSE")
     if controller_config.get("control_delta") is not True:
         raise ValueError("Expected delta OSC_POSE convention")
